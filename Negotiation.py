@@ -9,7 +9,6 @@ from src.core.Item import Item
 from src.core.Round import Round
 from src.utils.MessageParser import MessageParser
 from src.utils.AllocationTracker import AllocationTracker
-from src.analysis.ParetoAnalyzer import ParetoAnalyzer
 from src.utils.CSVLogger import CSVLogger
 from config.settings import *
 
@@ -300,7 +299,6 @@ When you reach an agreement, end your message with "AGREE".
         # Calculate total scores across all completed rounds
         total_agent1_value = 0.0
         total_agent2_value = 0.0
-        pareto_optimal_count = 0
         
         print(f"\n{Fore.CYAN}ROUND-BY-ROUND ANALYSIS:{Fore.RESET}")
         print("="*60)
@@ -312,32 +310,25 @@ When you reach an agreement, end your message with "AGREE".
             final_allocation = self.allocation_tracker.get_final_allocation(round_obj.round_number)
             
             if final_allocation:
-                # Analyze this round's allocation
-                analysis = ParetoAnalyzer.analyze_allocation_efficiency(round_obj.items, final_allocation)
+                # Calculate basic values for display
+                agent1_value = sum(
+                    item.agent1Value for item in round_obj.items 
+                    if item.name in final_allocation.get('agent1', [])
+                )
+                agent2_value = sum(
+                    item.agent2Value for item in round_obj.items 
+                    if item.name in final_allocation.get('agent2', [])
+                )
                 
                 # Add to totals
-                total_agent1_value += analysis['agent1_value']
-                total_agent2_value += analysis['agent2_value']
+                total_agent1_value += agent1_value
+                total_agent2_value += agent2_value
                 
-                if analysis['is_pareto_optimal']:
-                    pareto_optimal_count += 1
-                
-                # Display round analysis
+                # Display round allocation (without detailed analysis)
                 print(f"  Final Allocation:")
-                print(f"    Agent 1: {final_allocation['agent1']} (Value: {analysis['agent1_value']:.2f})")
-                print(f"    Agent 2: {final_allocation['agent2']} (Value: {analysis['agent2_value']:.2f})")
-                print(f"  Total Welfare: {analysis['total_welfare']:.2f}")
-                print(f"  Welfare Efficiency: {analysis['welfare_efficiency']:.1%}")
-                
-                if analysis['is_pareto_optimal']:
-                    print(f"  {Fore.GREEN}✅ Pareto Optimal{Fore.RESET}")
-                else:
-                    print(f"  {Fore.RED}❌ Not Pareto Optimal{Fore.RESET}")
-                    if analysis['potential_improvements']:
-                        best_improvement = analysis['potential_improvements'][0]
-                        print(f"  {Fore.YELLOW}💡 Best improvement: Total welfare {best_improvement['total_welfare']:.2f}{Fore.RESET}")
-                
-                print(f"  Available Pareto allocations: {analysis['pareto_optimal_count']}")
+                print(f"    Agent 1: {final_allocation['agent1']} (Value: {agent1_value:.2f})")
+                print(f"    Agent 2: {final_allocation['agent2']} (Value: {agent2_value:.2f})")
+                print(f"  Total Welfare: {agent1_value + agent2_value:.2f}")
             else:
                 print(f"  {Fore.RED}No final allocation recorded{Fore.RESET}")
         
@@ -354,8 +345,7 @@ When you reach an agreement, end your message with "AGREE".
             print(f"Average Welfare per Round: {(total_agent1_value + total_agent2_value) / len(completed_rounds):.2f}")
             
             print(f"\n{Fore.CYAN}EFFICIENCY METRICS:{Fore.RESET}")
-            print(f"Pareto Optimal Rounds: {pareto_optimal_count}/{len(completed_rounds)}")
-            print(f"Pareto Optimality Rate: {pareto_optimal_count/len(completed_rounds):.1%}")
+            print(f"Run analyze_results.py for detailed Pareto optimality analysis")
             
             # Determine winner
             if total_agent1_value > total_agent2_value:
@@ -370,33 +360,9 @@ When you reach an agreement, end your message with "AGREE".
                 print(f"\n{Fore.YELLOW}🤝 SESSION RESULT: TIE{Fore.RESET}")
         
         # Detailed analysis for each completed round
-        print(f"\n{Fore.MAGENTA}{'='*60}")
-        print(f"=== DETAILED PARETO ANALYSIS ===")
-        print(f"{'='*60}{Fore.RESET}")
-        
-        for round_obj in completed_rounds:
-            final_allocation = self.allocation_tracker.get_final_allocation(round_obj.round_number)
-            if final_allocation:
-                print(f"\n{Fore.CYAN}Round {round_obj.round_number} Detailed Analysis:{Fore.RESET}")
-                analysis = ParetoAnalyzer.analyze_allocation_efficiency(round_obj.items, final_allocation)
-                formatted_report = ParetoAnalyzer.format_analysis_report(analysis)
-                
-                # Color code the report lines
-                for line in formatted_report.split('\n'):
-                    if '✅' in line:
-                        print(f"{Fore.GREEN}{line}{Fore.RESET}")
-                    elif '❌' in line:
-                        print(f"{Fore.RED}{line}{Fore.RESET}")
-                    elif '📊' in line or '═' in line:
-                        print(f"{Fore.CYAN}{line}{Fore.RESET}")
-                    elif '📈' in line:
-                        print(f"{Fore.YELLOW}{line}{Fore.RESET}")
-                    else:
-                        print(line)
-        
-        print(f"\n{Fore.MAGENTA}{'='*60}")
-        print(f"=== END SESSION ANALYSIS ===")
-        print(f"{'='*60}{Fore.RESET}")
+        # Summary message
+        print(f"\n{Fore.MAGENTA}Analysis complete! Use analyze_results.py to calculate detailed metrics.{Fore.RESET}")
+        print(f"Raw data saved to: {self.csv_logger.get_filename()}")
         
         self.total_scores = {"agent1": total_agent1_value, "agent2": total_agent2_value}
 

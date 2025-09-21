@@ -2,3 +2,4 @@ colorama
 ollama
 langchain-ollama
 langchain
+pandas

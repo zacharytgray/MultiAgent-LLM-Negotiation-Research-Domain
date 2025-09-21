@@ -14,7 +14,7 @@ This framework simulates competitive negotiation environments where two LLM agen
 
 ## 🏗️ Architecture Overview
 
-The system follows a modular, professional package structure designed for research scalability and maintainability:
+The system follows a modular, two-stage architecture designed for research scalability and analytical flexibility:
 
 ```
 MultiAgent-LLM-Negotiation-Research-Domain/
@@ -24,9 +24,25 @@ MultiAgent-LLM-Negotiation-Research-Domain/
 │   ├── analysis/                 # Research analysis tools
 │   └── utils/                    # Utility functions and helpers
 ├── config/                       # Configuration management
-├── logs/                         # Generated experiment data
-└── Negotiation.py               # Main experiment runner
+├── logs/                         # Raw negotiation data (CSV)
+├── results/                      # Analyzed results with metrics
+├── Negotiation.py               # Main experiment runner
+└── analyze_results.py           # Post-negotiation analysis script
 ```
+
+## 🔄 Two-Stage Design Philosophy
+
+### Stage 1: Data Collection (`Negotiation.py`)
+- **Fast execution**: No heavy analysis during negotiations
+- **Raw data storage**: Complete conversation history, proposals, and allocations
+- **Real-time feedback**: Basic round summaries and progress tracking
+- **Output**: Raw CSV files in `logs/` directory
+
+### Stage 2: Analysis (`analyze_results.py`)
+- **Comprehensive metrics**: Pareto optimality, welfare efficiency, negotiation dynamics
+- **Flexible analysis**: Add new metrics without re-running negotiations
+- **Reproducible results**: Same raw data can be analyzed multiple ways
+- **Output**: Analyzed CSV files in `results/` directory
 
 ## 🧩 Component Documentation
 
@@ -75,20 +91,20 @@ MultiAgent-LLM-Negotiation-Research-Domain/
 ### Utility System (`src/utils/`)
 
 #### `CSVLogger.py`
-- **Purpose**: Comprehensive data logging for research analysis
+- **Purpose**: Raw data logging for post-processing analysis
 - **Key Features**:
-  - Structured CSV output with 40+ metrics per round
+  - Stores raw negotiation data
+  - JSON fields for complex data structures
+  - Complete conversation and proposal history preservation
   - Unique timestamped filenames (`MODEL_ITEMS_YYYYMMDD_HHMM.csv`)
-  - Integration with Pareto analysis for outcome classification
-  - Configurable logging parameters and output directories
 
 #### `MessageParser.py`
 - **Purpose**: Natural language processing for negotiation communication
 - **Key Features**:
-  - Proposal extraction from free-form text
+  - Formal proposal extraction using structured JSON format
   - Agreement detection and validation
-  - Structured parsing of allocation statements
   - Error handling for malformed proposals
+  - Support for `PROPOSAL {"agent1": [...], "agent2": [...]}` syntax
 
 #### `AllocationTracker.py`
 - **Purpose**: State management for negotiation progress
@@ -106,14 +122,14 @@ MultiAgent-LLM-Negotiation-Research-Domain/
   - Model and agent configuration constants
   - Negotiation parameters (max turns, item constraints)
   - Analysis thresholds and display settings
-  - CSV logging and file naming conventions
+  - File directory and naming conventions
 
 #### `system_instructions.txt`
 - **Purpose**: Agent behavior guidelines and negotiation rules
 - **Key Features**:
-  - Strategic guidance for LLM agents
-  - Negotiation protocol definitions
-  - Communication format specifications
+  - Strategic guidance for competitive negotiations
+  - Formal proposal syntax requirements
+  - Communication protocols and format specifications
 
 ## 🚀 Getting Started
 
@@ -126,21 +142,19 @@ pip install -r requirements.txt
 # Default: http://localhost:11434
 ```
 
-### Basic Usage
-```python
-# Run a complete negotiation session
+### Two-Stage Workflow
+
+#### Stage 1: Run Negotiations
+```bash
 python Negotiation.py
-
-# Or customize parameters
-from Negotiation import NegotiationSession
-
-session = NegotiationSession(
-    num_rounds=5,           # Number of negotiation rounds
-    items_per_round=4,      # Items to negotiate per round
-    model_name="gemma3:12b" # LLM model to use
-)
-await session.run_negotiation()
 ```
+**Output**: Raw data saved to `logs/MODEL_ITEMS_YYYYMMDD_HHMM.csv`
+
+#### Stage 2: Analyze Results
+```bash
+python analyze_results.py logs/gpt-oss_20b_4_20250921_1425.csv
+```
+**Output**: Analyzed data saved to `results/gpt-oss_20b_4_20250921_1425_analyzed.csv`
 
 ### Configuration Options
 All system parameters can be modified in `config/settings.py`:
@@ -151,65 +165,69 @@ All system parameters can be modified in `config/settings.py`:
 
 ## 📊 Research Data Output
 
-### CSV Logging
-Each experiment generates a comprehensive CSV file with metrics including:
-- **Session Metadata**: Model, timestamp, configuration parameters
-- **Round Performance**: Duration, turn count, completion status
-- **Agent Behavior**: Proposal patterns, agreement timing
-- **Outcome Analysis**: Final allocations, utility scores
-- **Efficiency Metrics**: Pareto optimality, welfare measurements
+### Raw Data (logs/)
+Each negotiation session generates a CSV with:
+- **Session Metadata**: Model, timestamp, configuration
+- **Round Data**: Items, allocations, timing
+- **Conversation History**: Complete agent interactions
+- **Proposal History**: All formal proposals with validation
+- **Outcome Data**: Final allocations and completion status
 
-### Real-time Analysis
-The system provides live console output with:
-- Color-coded agent conversations
-- Proposal validation and feedback
-- Pareto optimality detection
-- Round completion summaries
-- Session-wide performance statistics
+### Analyzed Results (results/)
+Post-processing analysis adds:
+- **Pareto Optimality**: Efficiency classification and measurements
+- **Welfare Analysis**: Total welfare, individual agent efficiency
+- **Negotiation Dynamics**: Proposal patterns, agreement timing
+- **Strategy Metrics**: Turn counts, proposal validation rates
 
 ## 🎓 Research Applications
 
-This framework is designed for:
+This framework enables:
 - **Behavioral AI Research**: Understanding LLM negotiation strategies
-- **Game Theory Studies**: Empirical analysis of multi-agent interactions
+- **Game Theory Studies**: Empirical analysis of multi-agent interactions  
 - **Efficiency Analysis**: Measuring Pareto optimality in AI negotiations
-- **Strategic Learning**: Investigating adaptation across multiple rounds
-- **Comparative Studies**: Evaluating different models and parameters
+- **Longitudinal Studies**: Strategy evolution across multiple rounds
+- **Comparative Analysis**: Different models, parameters, and conditions
 
-## 🤝 Example Negotiation Flow
+## 🤝 Enhanced Negotiation Protocol
 
+### Formal Proposal System
+Agents use structured JSON format for proposals:
 ```
-Round 1 Starting
-================
-Items for Round 1:
-  ItemA: Agent1=0.9, Agent2=0.3
-  ItemB: Agent1=0.2, Agent2=0.8
-  ItemC: Agent1=0.7, Agent2=0.5
-  ItemD: Agent1=0.4, Agent2=0.9
-Starting Agent: Agent 1
+Agent: "I think this allocation works well for both of us.
 
-Agent 1's turn (Turn 1):
-Agent 1: I propose taking ItemA and ItemC, which leaves ItemB and ItemD for you.
+PROPOSAL {
+  "agent1": ["ItemA", "ItemC"],
+  "agent2": ["ItemB", "ItemD"]  
+}
 
-Agent 2's turn (Turn 2):
-Agent 2: That works well for me since ItemB and ItemD are valuable to me. AGREE.
-
-Agent 1's turn (Turn 3):
-Agent 1: Excellent! AGREE.
-
-Both agents have agreed! Round 1 complete.
-Final allocation: {'agent1': ['ItemA', 'ItemC'], 'agent2': ['ItemB', 'ItemD']}
-✅ Pareto Optimal allocation achieved!
-📊 Round 1 logged to CSV (Duration: 12.3s, Turns: 3)
+This gives us both some high-value items. What do you think?"
 ```
 
-## 📈 Future Enhancements
+### Agreement Protocol
+- Agents type "AGREE" to accept current proposal
+- Both agents must agree consecutively to finalize round
+- System validates all proposals for completeness and correctness
 
-- **Multi-Model Comparisons**: Framework for testing different LLM architectures
-- **Advanced Analysis**: Machine learning-based strategy classification
-- **Interactive Visualization**: Real-time negotiation analysis dashboards
-- **Extended Protocols**: Support for more complex negotiation scenarios
-- **Benchmarking Suite**: Standardized evaluation metrics and test cases
+## Adding New Analysis Metrics
+
+1. **Add calculation functions** to `analyze_results.py`
+2. **Update analysis pipeline** in the `analyze_round()` method  
+3. **Re-run analysis** on existing CSV files (no re-negotiation needed)
+4. **Raw data contains everything**: Items, allocations, conversations, proposals
+
+## 📄 Example Usage
+
+```bash
+# Run a 5-round negotiation session
+python Negotiation.py  # Uses config/settings.py defaults
+
+# Analyze the results with all metrics
+python analyze_results.py logs/log_file_path.csv
+
+# Check results directory for analyzed output
+ls results/
+```
 
 ## 📄 License
 

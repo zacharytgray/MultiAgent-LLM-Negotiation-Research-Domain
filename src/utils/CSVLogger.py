@@ -1,11 +1,11 @@
 import csv
 import os
+import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from ..core.Item import Item
 from ..core.Round import Round
-from ..analysis.ParetoAnalyzer import ParetoAnalyzer
 
 # Import configuration constants
 import sys
@@ -13,9 +13,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from config.settings import CSV_FILENAME_TIMESTAMP_FORMAT, DEFAULT_LOG_DIR
 
 @dataclass
-class NegotiationLogEntry:
+class RawNegotiationLogEntry:
     """
-    Comprehensive data structure for a single negotiation round log entry.
+    Raw data structure for a single negotiation round log entry.
+    Contains only raw data.
     """
     # Session metadata
     session_id: str
@@ -31,37 +32,21 @@ class NegotiationLogEntry:
     # Round timing and interaction metrics
     round_duration_seconds: float
     turn_count: int
-    max_turns: int
     starting_agent: int
     round_completed: bool
     agreement_reached: bool
     
-    # Item details (flattened for CSV)
-    agent1_values: str  # comma-separated
-    agent2_values: str  # comma-separated
-    total_value_pool: float
+    # Raw item data (JSON strings for complex data)
+    items_data: str  # JSON: [{"name": "ItemA", "agent1_value": 0.8, "agent2_value": 0.3}, ...]
     
     # Final allocation
-    agent1_items: str  # comma-separated
-    agent2_items: str  # comma-separated
-    agent1_final_value: float
-    agent2_final_value: float
-    total_welfare: float
+    final_allocation: str  # JSON: {"agent1": ["ItemA", "ItemB"], "agent2": ["ItemC", "ItemD"]}
     
-    # Pareto analysis
-    is_pareto_optimal: bool
-    welfare_efficiency: float
-    max_possible_welfare: float
-    welfare_gap: float
-    pareto_optimal_count: int
-    unique_pareto_combinations: int
+    # Conversation history
+    conversation_history: str  # JSON: [(agent_num, message), ...]
     
     # Negotiation dynamics
-    proposal_count: int
-    valid_proposal_count: int
-    invalid_proposal_count: int
-    agent1_proposal_count: int
-    agent2_proposal_count: int
+    proposal_history: str  # JSON: [(agent_num, proposal_data), ...]
     final_proposer: Optional[int]
 
 class CSVLogger:
@@ -97,47 +82,48 @@ class CSVLogger:
                         round_duration: float,
                         final_allocation: Dict[str, List[str]],
                         allocation_tracker: Any,
-                        total_rounds: int) -> NegotiationLogEntry:
+                        total_rounds: int) -> RawNegotiationLogEntry:
         """
-        Create a comprehensive log entry for a negotiation round.
+        Create a raw log entry for a negotiation round without analysis metrics.
         """
-        # Analyze the allocation
-        analysis = ParetoAnalyzer.analyze_allocation_efficiency(round_obj.items, final_allocation)
-        
-        # Calculate max possible values for each agent
-        agent1_max_possible = sum(item.agent1Value for item in round_obj.items)
-        agent2_max_possible = sum(item.agent2Value for item in round_obj.items)
+        # Serialize items data
+        items_data = [
+            {
+                "name": item.name,
+                "agent1_value": item.agent1Value,
+                "agent2_value": item.agent2Value
+            }
+            for item in round_obj.items
+        ]
         
         # Get proposal statistics from allocation tracker
         round_state = allocation_tracker.round_states.get(round_obj.round_number)
-        proposal_count = len(round_state.proposal_history) if round_state else 0
-        
-        # Extract valid and invalid proposals from the proposal history
-        valid_proposals = []
-        invalid_proposals = []
-        agent1_proposals = []
-        agent2_proposals = []
-        
-        if round_state and round_state.proposal_history:
-            for agent_num, proposal in round_state.proposal_history:
-                if proposal.is_valid:
-                    valid_proposals.append((agent_num, proposal))
-                    if agent_num == 1:
-                        agent1_proposals.append((agent_num, proposal))
-                    else:
-                        agent2_proposals.append((agent_num, proposal))
-                else:
-                    invalid_proposals.append((agent_num, proposal))
-        
+        proposal_history = []
         final_proposer = None
+        
         if round_state and round_state.proposal_history:
+            # Store proposal history as structured data
+            proposal_history = [
+                {
+                    "agent_num": agent_num,
+                    "proposal": {
+                        "agent1_items": proposal.agent1_items,
+                        "agent2_items": proposal.agent2_items,
+                        "is_valid": proposal.is_valid,
+                        "error_message": proposal.error_message  # Changed from validation_message
+                    }
+                }
+                for agent_num, proposal in round_state.proposal_history
+            ]
+            
+            # Find final proposer
             for agent_num, proposal in reversed(round_state.proposal_history):
                 if proposal.is_valid:
                     final_proposer = agent_num
                     break
         
-        # Create the log entry
-        entry = NegotiationLogEntry(
+        # Create the raw log entry
+        entry = RawNegotiationLogEntry(
             # Session metadata
             session_id=self.session_id,
             model_name=self.model_name,
@@ -152,43 +138,21 @@ class CSVLogger:
             # Round timing and interaction metrics
             round_duration_seconds=round_duration,
             turn_count=len(round_obj.conversation_history),
-            max_turns=20,  # TODO: Make this configurable
             starting_agent=round_obj.starting_agent,
             round_completed=round_obj.is_complete,
             agreement_reached=round_obj.is_complete,
             
-            # Item details
-            agent1_values=",".join([str(item.agent1Value) for item in round_obj.items]),
-            agent2_values=",".join([str(item.agent2Value) for item in round_obj.items]),
-            total_value_pool=agent1_max_possible + agent2_max_possible,
-            
-            # Final allocation
-            agent1_items=",".join(final_allocation.get('agent1', [])),
-            agent2_items=",".join(final_allocation.get('agent2', [])),
-            agent1_final_value=analysis['agent1_value'],
-            agent2_final_value=analysis['agent2_value'],
-            total_welfare=analysis['total_welfare'],
-            
-            # Pareto analysis
-            is_pareto_optimal=analysis['is_pareto_optimal'],
-            welfare_efficiency=analysis['welfare_efficiency'],
-            max_possible_welfare=analysis['max_possible_welfare'],
-            welfare_gap=analysis['max_possible_welfare'] - analysis['total_welfare'],
-            pareto_optimal_count=analysis['pareto_optimal_count'],
-            unique_pareto_combinations=analysis['unique_pareto_optimal_count'],
-            
-            # Negotiation dynamics
-            proposal_count=proposal_count,
-            valid_proposal_count=len(valid_proposals),
-            invalid_proposal_count=len(invalid_proposals),
-            agent1_proposal_count=len(agent1_proposals),
-            agent2_proposal_count=len(agent2_proposals),
+            # Raw data as JSON strings
+            items_data=json.dumps(items_data),
+            final_allocation=json.dumps(final_allocation),
+            conversation_history=json.dumps(round_obj.conversation_history),
+            proposal_history=json.dumps(proposal_history),
             final_proposer=final_proposer
         )
         
         return entry
     
-    def log_round(self, entry: NegotiationLogEntry):
+    def log_round(self, entry: RawNegotiationLogEntry):
         """
         Write a round entry to the CSV file.
         """

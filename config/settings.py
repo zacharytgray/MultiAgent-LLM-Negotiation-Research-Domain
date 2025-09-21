@@ -8,7 +8,7 @@ Centralizes all configurable parameters and constants.
 # =============================================================================
 
 # Default model settings
-DEFAULT_MODEL_NAME = "gemma3:12b"
+DEFAULT_MODEL_NAME = "gpt-oss:20b"
 MODEL_TEMPERATURE = 0.5
 RESPONSE_TIMEOUT = 60
 OLLAMA_BASE_URL = "http://localhost:11434"
@@ -24,7 +24,7 @@ USE_TOOLS_BY_DEFAULT = False
 # Round settings
 DEFAULT_NUM_ROUNDS = 3
 DEFAULT_ITEMS_PER_ROUND = 4
-MAX_TURNS_PER_ROUND = 20
+MAX_TURNS_PER_ROUND = 30
 DEFAULT_STARTING_AGENT = 1  # 1 or 2
 
 # Item value constraints
@@ -49,6 +49,7 @@ PROPOSAL_KEYWORD = "PROPOSAL"
 
 # CSV logging
 DEFAULT_LOG_DIR = "logs"
+DEFAULT_RESULTS_DIR = "results"
 CSV_ENCODING = "utf-8"
 CSV_DATE_FORMAT = "%Y%m%d"
 CSV_TIMESTAMP_FORMAT = "%Y-%m-%d"
