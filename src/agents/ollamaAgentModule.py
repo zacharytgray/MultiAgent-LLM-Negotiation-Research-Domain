@@ -2,7 +2,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from colorama import Fore
-from ollamaTools import ALL_TOOLS  # Import dynamic tool collection
+from .ollamaTools import ALL_TOOLS  # Import dynamic tool collection
 from langchain_core.messages import ToolMessage
 
 class Agent:

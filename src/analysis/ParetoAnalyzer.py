@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional, Tuple
 from itertools import combinations
-from Item import Item
+from ..core.Item import Item
 
 class ParetoAnalyzer:
     """

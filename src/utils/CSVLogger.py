@@ -3,9 +3,14 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
-from Item import Item
-from Round import Round
-from Scoring.ParetoAnalyzer import ParetoAnalyzer
+from ..core.Item import Item
+from ..core.Round import Round
+from ..analysis.ParetoAnalyzer import ParetoAnalyzer
+
+# Import configuration constants
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from config.settings import CSV_FILENAME_TIMESTAMP_FORMAT, DEFAULT_LOG_DIR
 
 @dataclass
 class NegotiationLogEntry:
@@ -64,7 +69,7 @@ class CSVLogger:
     Handles CSV logging for negotiation sessions with comprehensive data capture.
     """
     
-    def __init__(self, model_name: str, num_items: int, base_dir: str = "logs"):
+    def __init__(self, model_name: str, num_items: int, base_dir: str = DEFAULT_LOG_DIR):
         self.model_name = model_name
         self.num_items = num_items
         self.base_dir = base_dir
@@ -83,9 +88,9 @@ class CSVLogger:
         return f"{self.model_name}_{self.num_items}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     def _generate_filename(self) -> str:
-        """Generate filename following MODELNAME_NUMITEMS_DATE.csv convention"""
-        date_str = datetime.now().strftime('%Y%m%d')
-        return f"{self.model_name}_{self.num_items}_{date_str}.csv"
+        """Generate filename following MODELNAME_NUMITEMS_YYYYMMDD_HHMM.csv convention"""
+        timestamp_str = datetime.now().strftime(CSV_FILENAME_TIMESTAMP_FORMAT)
+        return f"{self.model_name}_{self.num_items}_{timestamp_str}.csv"
     
     def create_log_entry(self, 
                         round_obj: Round, 

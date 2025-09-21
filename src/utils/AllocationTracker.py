@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
-from MessageParser import ParsedProposal
+from .MessageParser import ParsedProposal
 
 @dataclass 
 class ProposalState:

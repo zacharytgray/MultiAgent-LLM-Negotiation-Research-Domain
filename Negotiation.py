@@ -3,14 +3,15 @@ import random
 import time
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
-from ollamaAgentModule import Agent
+from src.agents.ollamaAgentModule import Agent
 from colorama import Fore, init
-from Item import Item
-from Round import Round
-from MessageParser import MessageParser
-from AllocationTracker import AllocationTracker
-from Scoring.ParetoAnalyzer import ParetoAnalyzer
-from CSVLogger import CSVLogger
+from src.core.Item import Item
+from src.core.Round import Round
+from src.utils.MessageParser import MessageParser
+from src.utils.AllocationTracker import AllocationTracker
+from src.analysis.ParetoAnalyzer import ParetoAnalyzer
+from src.utils.CSVLogger import CSVLogger
+from config.settings import *
 
 # Initialize colorama
 init(autoreset=True)
@@ -19,7 +20,7 @@ class NegotiationSession:
     """
     Main class that manages the entire negotiation session across multiple rounds.
     """
-    def __init__(self, num_rounds: int, items_per_round: int = 4, model_name: str = "gemma3_12b"):
+    def __init__(self, num_rounds: int, items_per_round: int = DEFAULT_ITEMS_PER_ROUND, model_name: str = DEFAULT_MODEL_NAME):
         self.num_rounds = num_rounds
         self.items_per_round = items_per_round
         self.model_name = model_name.replace(":", "_")  # Clean up for filename
@@ -31,8 +32,8 @@ class NegotiationSession:
         print(f"{Fore.GREEN}📊 CSV logging to: {self.csv_logger.get_filename()}{Fore.RESET}")
         
         # Initialize agents
-        self.agent1 = Agent("gemma3:12b", "systemInstructions.txt")
-        self.agent2 = Agent("gemma3:12b", "systemInstructions.txt")
+        self.agent1 = Agent(DEFAULT_MODEL_NAME, SYSTEM_INSTRUCTIONS_FILE)
+        self.agent2 = Agent(DEFAULT_MODEL_NAME, SYSTEM_INSTRUCTIONS_FILE)
         
         # Initialize proposal tracking components
         self.message_parser = MessageParser()
@@ -43,27 +44,19 @@ class NegotiationSession:
         Generate random items for a round with random values for each agent.
         """
         items = []
-        item_names = ["ItemA", "ItemB", "ItemC", "ItemD", "ItemE", "ItemF", "ItemG", "ItemH"]
         
         for i in range(self.items_per_round):
-            name = item_names[i] if i < len(item_names) else f"Item{i+1}"
-            agent1_value = round(random.uniform(0.0, 1.0), 1)
-            agent2_value = round(random.uniform(0.0, 1.0), 1)
+            name = ITEM_NAMES[i] if i < len(ITEM_NAMES) else f"Item{i+1}"
+            agent1_value = round(random.uniform(MIN_ITEM_VALUE, MAX_ITEM_VALUE), ITEM_VALUE_PRECISION)
+            agent2_value = round(random.uniform(MIN_ITEM_VALUE, MAX_ITEM_VALUE), ITEM_VALUE_PRECISION)
             items.append(Item(name, agent1_value, agent2_value))
             
         return items
     
-    async def run_round(self, round_number: int) -> Round:
+    def _prepare_round_setup(self, round_number: int) -> Tuple[List[Item], int, Round]:
         """
-        Execute a single round of negotiation.
+        Prepare the basic setup for a round: items, starting agent, and round object.
         """
-        # Start timing the round
-        round_start_time = time.time()
-        
-        print(f"\n{Fore.CYAN}{'='*50}")
-        print(f"Round {round_number} Starting")
-        print(f"{'='*50}{Fore.RESET}")
-        
         # Reset agent memories to start fresh each round (preserving only system instructions)
         self.agent1.reset_memory()
         self.agent2.reset_memory()
@@ -74,16 +67,28 @@ class NegotiationSession:
         # Determine starting agent (alternates each round)
         starting_agent = 1 if round_number % 2 == 1 else 2
         
-        # Create round
+        # Create round object
         round_obj = Round(round_number, items, self.agent1, self.agent2, starting_agent)
         
-        # Display items to console (for debugging)
+        return items, starting_agent, round_obj
+    
+    def _display_round_info(self, round_number: int, items: List[Item], starting_agent: int):
+        """
+        Display round information to the console.
+        """
+        print(f"\n{Fore.CYAN}{'='*SEPARATOR_LENGTH}")
+        print(f"Round {round_number} Starting")
+        print(f"{'='*SEPARATOR_LENGTH}{Fore.RESET}")
+        
         print(f"\n{Fore.YELLOW}Items for Round {round_number}:")
         for item in items:
             print(f"  {item.name}: Agent1={item.agent1Value}, Agent2={item.agent2Value}")
         print(f"Starting Agent: Agent {starting_agent}{Fore.RESET}\n")
-        
-        # Prepare initial context for agents
+    
+    def _prepare_agent_contexts(self, round_obj: Round):
+        """
+        Prepare and set initial context for both agents.
+        """
         agent1_context = f"""
 --Round Start--
 You are Agent 1 in a negotiation. Your goal is to maximize your own value.
@@ -109,20 +114,19 @@ When you reach an agreement, end your message with "AGREE".
         self.agent2.addToMemory('system', agent2_context)
         
         # Give the starting agent an initial prompt to begin the negotiation
-        if starting_agent == 1:
+        if round_obj.starting_agent == 1:
             self.agent1.addToMemory('user', "Please begin the negotiation by making your opening proposal.")
         else:
             self.agent2.addToMemory('user', "Please begin the negotiation by making your opening proposal.")
-        
-        # Start the negotiation
-        max_turns = 20  # Prevent infinite loops
+    
+    async def _execute_negotiation_loop(self, round_obj: Round, available_items: List[str]) -> bool:
+        """
+        Execute the main negotiation loop between agents.
+        Returns True if agreement reached, False if max turns exceeded.
+        """
+        max_turns = MAX_TURNS_PER_ROUND  # Prevent infinite loops
         turn_count = 0
-        
-        # Initialize allocation tracking for this round
-        self.allocation_tracker.initialize_round(round_number)
-        available_items = [item.name for item in items]
-        
-        current_agent_num = starting_agent
+        current_agent_num = round_obj.starting_agent
         
         while turn_count < max_turns and not round_obj.is_complete:
             turn_count += 1
@@ -139,35 +143,11 @@ When you reach an agreement, end your message with "AGREE".
                 current_color = Fore.BLUE
                 other_agent_num = 1
             
-            # Generate response from current agent
-            print(f"{current_color}Agent {current_agent_num}'s turn (Turn {turn_count}):{Fore.RESET}")
-            response = await current_agent.generateResponse()
-            print(f"{current_color}Agent {current_agent_num}: {response}{Fore.RESET}\n")
-            
-            # Parse the response for formal proposals
-            proposal = self.message_parser.extract_proposal(response, available_items)
-            if proposal:
-                if proposal.is_valid:
-                    print(f"{Fore.YELLOW}✓ Valid proposal detected from Agent {current_agent_num}:{Fore.RESET}")
-                    print(f"{Fore.YELLOW}  Agent 1: {proposal.agent1_items}{Fore.RESET}")
-                    print(f"{Fore.YELLOW}  Agent 2: {proposal.agent2_items}{Fore.RESET}")
-                    self.allocation_tracker.update_proposal(round_number, current_agent_num, proposal)
-                else:
-                    print(f"{Fore.RED}✗ Invalid proposal from Agent {current_agent_num}: {proposal.error_message}{Fore.RESET}")
-            
-            # Check for agreement
-            if self.message_parser.contains_agreement(response):
-                print(f"{Fore.CYAN}Agent {current_agent_num} agreed!{Fore.RESET}")
-                self.allocation_tracker.record_agreement(round_number, current_agent_num)
-                
-                # Check if round is complete (both agents agreed to a valid proposal)
-                if self.allocation_tracker.is_round_complete(round_number):
-                    final_allocation = self.allocation_tracker.get_final_allocation(round_number)
-                    print(f"{Fore.CYAN}Both agents have agreed! Round {round_number} complete.{Fore.RESET}")
-                    print(f"{Fore.CYAN}Final allocation: {final_allocation}{Fore.RESET}")
-                    round_obj.is_complete = True
-                    round_obj.final_allocation = final_allocation
-                    break
+            # Generate and process agent response
+            response = await self._process_agent_turn(
+                current_agent, current_agent_num, current_color, turn_count, 
+                round_obj, available_items
+            )
             
             # Add current agent's response to other agent's memory
             other_agent.addToMemory('user', f"Agent {current_agent_num}: {response}")
@@ -175,18 +155,58 @@ When you reach an agreement, end your message with "AGREE".
             # Store conversation history
             round_obj.conversation_history.append((current_agent_num, response))
             
+            # Check if round completed due to agreement
+            if round_obj.is_complete:
+                break
+                
             # Switch to other agent
             current_agent_num = other_agent_num
         
-        if not round_obj.is_complete:
-            print(f"{Fore.RED}Round {round_number} ended without agreement (max turns reached).{Fore.RESET}")
+        return round_obj.is_complete
+    
+    async def _process_agent_turn(self, current_agent: Agent, current_agent_num: int, 
+                                current_color: str, turn_count: int, round_obj: Round, 
+                                available_items: List[str]) -> str:
+        """
+        Process a single agent's turn in the negotiation.
+        Returns the agent's response.
+        """
+        # Generate response from current agent
+        print(f"{current_color}Agent {current_agent_num}'s turn (Turn {turn_count}):{Fore.RESET}")
+        response = await current_agent.generateResponse()
+        print(f"{current_color}Agent {current_agent_num}: {response}{Fore.RESET}\n")
         
-        # Calculate round duration
-        round_end_time = time.time()
-        round_duration = round_end_time - round_start_time
+        # Parse the response for formal proposals
+        proposal = self.message_parser.extract_proposal(response, available_items)
+        if proposal:
+            if proposal.is_valid:
+                print(f"{Fore.YELLOW}✓ Valid proposal detected from Agent {current_agent_num}:{Fore.RESET}")
+                print(f"{Fore.YELLOW}  Agent 1: {proposal.agent1_items}{Fore.RESET}")
+                print(f"{Fore.YELLOW}  Agent 2: {proposal.agent2_items}{Fore.RESET}")
+                self.allocation_tracker.update_proposal(round_obj.round_number, current_agent_num, proposal)
+            else:
+                print(f"{Fore.RED}✗ Invalid proposal from Agent {current_agent_num}: {proposal.error_message}{Fore.RESET}")
         
-        # Log this round to CSV
-        if round_obj.is_complete and round_obj.final_allocation:
+        # Check for agreement
+        if self.message_parser.contains_agreement(response):
+            print(f"{Fore.CYAN}Agent {current_agent_num} agreed!{Fore.RESET}")
+            self.allocation_tracker.record_agreement(round_obj.round_number, current_agent_num)
+            
+            # Check if round is complete (both agents agreed to a valid proposal)
+            if self.allocation_tracker.is_round_complete(round_obj.round_number):
+                final_allocation = self.allocation_tracker.get_final_allocation(round_obj.round_number)
+                print(f"{Fore.CYAN}Both agents have agreed! Round {round_obj.round_number} complete.{Fore.RESET}")
+                print(f"{Fore.CYAN}Final allocation: {final_allocation}{Fore.RESET}")
+                round_obj.is_complete = True
+                round_obj.final_allocation = final_allocation
+        
+        return response
+    
+    def _log_round_completion(self, round_obj: Round, round_duration: float, success: bool):
+        """
+        Log the round completion to CSV and display status.
+        """
+        if success and round_obj.final_allocation:
             try:
                 log_entry = self.csv_logger.create_log_entry(
                     round_obj=round_obj,
@@ -196,13 +216,45 @@ When you reach an agreement, end your message with "AGREE".
                     total_rounds=self.num_rounds
                 )
                 self.csv_logger.log_round(log_entry)
-                print(f"{Fore.GREEN}📊 Round {round_number} logged to CSV (Duration: {round_duration:.2f}s, Turns: {len(round_obj.conversation_history)}){Fore.RESET}")
+                print(f"{Fore.GREEN}📊 Round {round_obj.round_number} logged to CSV (Duration: {round_duration:.2f}s, Turns: {len(round_obj.conversation_history)}){Fore.RESET}")
             except Exception as e:
-                print(f"{Fore.RED}❌ Failed to log round {round_number}: {e}{Fore.RESET}")
+                print(f"{Fore.RED}❌ Failed to log round {round_obj.round_number}: {e}{Fore.RESET}")
         else:
-            print(f"{Fore.YELLOW}⚠️  Round {round_number} not logged (incomplete or no allocation){Fore.RESET}")
+            print(f"{Fore.YELLOW}⚠️  Round {round_obj.round_number} not logged (incomplete or no allocation){Fore.RESET}")
         
-        print(f"\n{Fore.CYAN}--End Round {round_number}--{Fore.RESET}\n")
+        print(f"\n{Fore.CYAN}--End Round {round_obj.round_number}--{Fore.RESET}\n")
+    
+    async def run_round(self, round_number: int) -> Round:
+        """
+        Execute a single round of negotiation.
+        """
+        # Start timing the round
+        round_start_time = time.time()
+        
+        # Prepare round setup
+        items, starting_agent, round_obj = self._prepare_round_setup(round_number)
+        
+        # Display round information
+        self._display_round_info(round_number, items, starting_agent)
+        
+        # Prepare agent contexts
+        self._prepare_agent_contexts(round_obj)
+        
+        # Initialize allocation tracking for this round
+        self.allocation_tracker.initialize_round(round_number)
+        available_items = [item.name for item in items]
+        
+        # Execute negotiation loop
+        success = await self._execute_negotiation_loop(round_obj, available_items)
+        
+        if not success:
+            print(f"{Fore.RED}Round {round_number} ended without agreement (max turns reached).{Fore.RESET}")
+        
+        # Calculate round duration and log completion
+        round_end_time = time.time()
+        round_duration = round_end_time - round_start_time
+        self._log_round_completion(round_obj, round_duration, success)
+        
         return round_obj
     
     async def run_negotiation(self):
@@ -354,7 +406,7 @@ async def main():
     Entry point for the negotiation system.
     """
     # Create and run a negotiation session
-    session = NegotiationSession(num_rounds=3, items_per_round=4)
+    session = NegotiationSession(num_rounds=DEFAULT_NUM_ROUNDS, items_per_round=DEFAULT_ITEMS_PER_ROUND)
     await session.run_negotiation()
 
 if __name__ == "__main__":

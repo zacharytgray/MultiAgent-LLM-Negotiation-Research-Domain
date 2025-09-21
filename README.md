@@ -1,28 +1,220 @@
-This is a competitive multiagent negotiation environment where 2 LLM agents must compete for n rounds of negotiation. 
-Each round will consist of two agents and a set of j items, where all j items are presented at the start of each round. 
-Each item object for a round has two fields: agent1Value and agent2Value.
-These value attributes are numbers {0.0, 0.1, ... 1.0}
-    Where values closer to 0.0 are the less appealing to the agent and values closer to 1.0 are of higher priority to the agent.
-Each agent's goal for round j is to maximize their own value for the set of items on the table.
-    Note: the other agent's value for that item is unknown to them, an agent only knows their own preference values.
-Once they agree on an item allocation, they must type "AGREE" consecutively to finalize the deal.
-Each new round alternates the agent that starts the negotiation.
+# Multi-Agent LLM Negotiation Research Domain
 
-For example,
---New Round Start--
-Items: [ItemA(agent1Value=0.3, agent2Value=0.8), ItemB(agent1Value=0.9, agent2Value=0.5), ItemC(agent1Value=0.4, agent2Value=0.6), ItemD(agent1Value=0.8, agent2Value=0.0)] # Agent 1 cannot see agent2Value, it only knows its own agent1Value.
+A sophisticated research framework for studying negotiation dynamics between Large Language Model (LLM) agents in competitive multi-round scenarios. This system enables comprehensive analysis of AI-to-AI negotiations with detailed logging, Pareto optimality analysis, and configurable experimental parameters.
 
-Agent 1: 'Hi, I'm Agent 1. I'd like to take Items B and D if that's okay with you. # Items B and D have values 0.9 and 0.8, which are desirable for Agent 1.
+## 🎯 Project Overview
 
-Agent 1: [Item B, Item D]
-Agent 2: [Item A, Item C]'
+This framework simulates competitive negotiation environments where two LLM agents must negotiate the allocation of valuable items across multiple rounds. Each agent only knows their own item valuations and must strategically negotiate to maximize their total utility without knowledge of their opponent's preferences.
 
-Agent 2: Hi Agent 1, I'm Agent 2. I'd like to take Items A and C, so that split works with me. # Items A and C have values 0.8 and 0.6, which are relatively high for Agent 2. 
+### Key Research Questions Addressed:
+- How do LLM agents develop negotiation strategies?
+- What factors influence Pareto-optimal outcomes in AI negotiations?
+- How does negotiation behavior evolve across multiple rounds?
+- What are the efficiency characteristics of AI-mediated negotiations?
 
-Agent 1: Great! That works out well for both of us. AGREE.
+## 🏗️ Architecture Overview
 
-Agent 2: AGREE.
---End Round--
+The system follows a modular, professional package structure designed for research scalability and maintainability:
 
-At the end of a round, the allocation will be stored. 
-At the end of all rounds, the allocations will be graded.
+```
+MultiAgent-LLM-Negotiation-Research-Domain/
+├── src/                          # Source code organized by responsibility
+│   ├── core/                     # Domain models and business logic
+│   ├── agents/                   # LLM agent implementations
+│   ├── analysis/                 # Research analysis tools
+│   └── utils/                    # Utility functions and helpers
+├── config/                       # Configuration management
+├── logs/                         # Generated experiment data
+└── Negotiation.py               # Main experiment runner
+```
+
+## 🧩 Component Documentation
+
+### Core Domain Models (`src/core/`)
+
+#### `Item.py`
+- **Purpose**: Represents negotiable items with agent-specific valuations
+- **Key Features**: 
+  - Dual valuation system (agent1Value, agent2Value)
+  - Value range: 0.0 (lowest) to 1.0 (highest priority)
+  - Encapsulates item metadata and utility calculations
+
+#### `Round.py`
+- **Purpose**: Manages individual negotiation rounds
+- **Key Features**:
+  - Tracks round state and completion status
+  - Stores conversation history and final allocations
+  - Manages agent turn sequences and round metadata
+
+### Agent System (`src/agents/`)
+
+#### `ollamaAgentModule.py`
+- **Purpose**: LLM agent implementation using Ollama framework
+- **Key Features**:
+  - Memory management for conversation context
+  - Integration with LangChain for prompt engineering
+  - Configurable model parameters and behavior
+  - Tool integration capabilities for enhanced reasoning
+
+#### `ollamaTools.py`
+- **Purpose**: Dynamic tool collection for agent capabilities
+- **Key Features**:
+  - Extensible tool framework for agent enhancement
+  - Integration with LangChain's tool ecosystem
+
+### Analysis Engine (`src/analysis/`)
+
+#### `ParetoAnalyzer.py`
+- **Purpose**: Advanced game-theoretic analysis of negotiation outcomes
+- **Key Features**:
+  - Pareto optimality detection and measurement
+  - Welfare efficiency calculations
+  - Alternative allocation generation and ranking
+  - Comprehensive efficiency metrics and reporting
+
+### Utility System (`src/utils/`)
+
+#### `CSVLogger.py`
+- **Purpose**: Comprehensive data logging for research analysis
+- **Key Features**:
+  - Structured CSV output with 40+ metrics per round
+  - Unique timestamped filenames (`MODEL_ITEMS_YYYYMMDD_HHMM.csv`)
+  - Integration with Pareto analysis for outcome classification
+  - Configurable logging parameters and output directories
+
+#### `MessageParser.py`
+- **Purpose**: Natural language processing for negotiation communication
+- **Key Features**:
+  - Proposal extraction from free-form text
+  - Agreement detection and validation
+  - Structured parsing of allocation statements
+  - Error handling for malformed proposals
+
+#### `AllocationTracker.py`
+- **Purpose**: State management for negotiation progress
+- **Key Features**:
+  - Proposal history tracking across conversation turns
+  - Agreement validation and finalization logic
+  - Round completion detection
+  - Final allocation determination and conflict resolution
+
+### Configuration Management (`config/`)
+
+#### `settings.py`
+- **Purpose**: Centralized configuration for all system parameters
+- **Key Features**:
+  - Model and agent configuration constants
+  - Negotiation parameters (max turns, item constraints)
+  - Analysis thresholds and display settings
+  - CSV logging and file naming conventions
+
+#### `system_instructions.txt`
+- **Purpose**: Agent behavior guidelines and negotiation rules
+- **Key Features**:
+  - Strategic guidance for LLM agents
+  - Negotiation protocol definitions
+  - Communication format specifications
+
+## 🚀 Getting Started
+
+### Prerequisites
+```bash
+# Install required dependencies
+pip install -r requirements.txt
+
+# Ensure Ollama is running locally
+# Default: http://localhost:11434
+```
+
+### Basic Usage
+```python
+# Run a complete negotiation session
+python Negotiation.py
+
+# Or customize parameters
+from Negotiation import NegotiationSession
+
+session = NegotiationSession(
+    num_rounds=5,           # Number of negotiation rounds
+    items_per_round=4,      # Items to negotiate per round
+    model_name="gemma3:12b" # LLM model to use
+)
+await session.run_negotiation()
+```
+
+### Configuration Options
+All system parameters can be modified in `config/settings.py`:
+- **Model Settings**: Default model, temperature, timeout
+- **Negotiation Parameters**: Max turns, item value ranges, round counts
+- **Analysis Settings**: Pareto thresholds, efficiency metrics
+- **Logging Configuration**: Output directories, filename formats
+
+## 📊 Research Data Output
+
+### CSV Logging
+Each experiment generates a comprehensive CSV file with metrics including:
+- **Session Metadata**: Model, timestamp, configuration parameters
+- **Round Performance**: Duration, turn count, completion status
+- **Agent Behavior**: Proposal patterns, agreement timing
+- **Outcome Analysis**: Final allocations, utility scores
+- **Efficiency Metrics**: Pareto optimality, welfare measurements
+
+### Real-time Analysis
+The system provides live console output with:
+- Color-coded agent conversations
+- Proposal validation and feedback
+- Pareto optimality detection
+- Round completion summaries
+- Session-wide performance statistics
+
+## 🎓 Research Applications
+
+This framework is designed for:
+- **Behavioral AI Research**: Understanding LLM negotiation strategies
+- **Game Theory Studies**: Empirical analysis of multi-agent interactions
+- **Efficiency Analysis**: Measuring Pareto optimality in AI negotiations
+- **Strategic Learning**: Investigating adaptation across multiple rounds
+- **Comparative Studies**: Evaluating different models and parameters
+
+## 🤝 Example Negotiation Flow
+
+```
+Round 1 Starting
+================
+Items for Round 1:
+  ItemA: Agent1=0.9, Agent2=0.3
+  ItemB: Agent1=0.2, Agent2=0.8
+  ItemC: Agent1=0.7, Agent2=0.5
+  ItemD: Agent1=0.4, Agent2=0.9
+Starting Agent: Agent 1
+
+Agent 1's turn (Turn 1):
+Agent 1: I propose taking ItemA and ItemC, which leaves ItemB and ItemD for you.
+
+Agent 2's turn (Turn 2):
+Agent 2: That works well for me since ItemB and ItemD are valuable to me. AGREE.
+
+Agent 1's turn (Turn 3):
+Agent 1: Excellent! AGREE.
+
+Both agents have agreed! Round 1 complete.
+Final allocation: {'agent1': ['ItemA', 'ItemC'], 'agent2': ['ItemB', 'ItemD']}
+✅ Pareto Optimal allocation achieved!
+📊 Round 1 logged to CSV (Duration: 12.3s, Turns: 3)
+```
+
+## 📈 Future Enhancements
+
+- **Multi-Model Comparisons**: Framework for testing different LLM architectures
+- **Advanced Analysis**: Machine learning-based strategy classification
+- **Interactive Visualization**: Real-time negotiation analysis dashboards
+- **Extended Protocols**: Support for more complex negotiation scenarios
+- **Benchmarking Suite**: Standardized evaluation metrics and test cases
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+*Built for advancing research in AI negotiation dynamics and multi-agent system behavior.*
