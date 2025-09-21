@@ -6,6 +6,7 @@ env/
 # Logs and data output
 /logs
 *.log
+/results
 
 # Python cache files (recursively ignore in all directories)
 __pycache__/

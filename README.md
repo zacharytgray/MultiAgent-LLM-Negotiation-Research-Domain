@@ -6,12 +6,6 @@ A sophisticated research framework for studying negotiation dynamics between Lar
 
 This framework simulates competitive negotiation environments where two LLM agents must negotiate the allocation of valuable items across multiple rounds. Each agent only knows their own item valuations and must strategically negotiate to maximize their total utility without knowledge of their opponent's preferences.
 
-### Key Research Questions Addressed:
-- How do LLM agents develop negotiation strategies?
-- What factors influence Pareto-optimal outcomes in AI negotiations?
-- How does negotiation behavior evolve across multiple rounds?
-- What are the efficiency characteristics of AI-mediated negotiations?
-
 ## 🏗️ Architecture Overview
 
 The system follows a modular, two-stage architecture designed for research scalability and analytical flexibility:
@@ -30,7 +24,7 @@ MultiAgent-LLM-Negotiation-Research-Domain/
 └── analyze_results.py           # Post-negotiation analysis script
 ```
 
-## 🔄 Two-Stage Design Philosophy
+## 🔄 Two-Stage Design
 
 ### Stage 1: Data Collection (`Negotiation.py`)
 - **Fast execution**: No heavy analysis during negotiations
@@ -39,7 +33,11 @@ MultiAgent-LLM-Negotiation-Research-Domain/
 - **Output**: Raw CSV files in `logs/` directory
 
 ### Stage 2: Analysis (`analyze_results.py`)
-- **Comprehensive metrics**: Pareto optimality, welfare efficiency, negotiation dynamics
+- **Comprehensive metrics**:
+  - **Pareto Optimality**: Identifies allocations where no agent can be made better off without making another worse off.
+  - **Welfare**: Measures the total combined utility achieved by all agents, calculated as the sum of each agent’s value for their allocated items.
+  - **Welfare Efficiency**: Expresses efficiency as the ratio of achieved welfare to the maximum possible welfare, where the maximum is determined by the best Pareto optimal allocation.
+  - **Negotiation Dynamics**: Analyzes patterns such as proposal frequency, agreement timing, and strategy shifts throughout the negotiation.
 - **Flexible analysis**: Add new metrics without re-running negotiations
 - **Reproducible results**: Same raw data can be analyzed multiple ways
 - **Output**: Analyzed CSV files in `results/` directory
