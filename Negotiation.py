@@ -1,5 +1,6 @@
 import asyncio
 import random
+import time
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from ollamaAgentModule import Agent
@@ -9,6 +10,7 @@ from Round import Round
 from MessageParser import MessageParser
 from AllocationTracker import AllocationTracker
 from Scoring.ParetoAnalyzer import ParetoAnalyzer
+from CSVLogger import CSVLogger
 
 # Initialize colorama
 init(autoreset=True)
@@ -17,11 +19,16 @@ class NegotiationSession:
     """
     Main class that manages the entire negotiation session across multiple rounds.
     """
-    def __init__(self, num_rounds: int, items_per_round: int = 4):
+    def __init__(self, num_rounds: int, items_per_round: int = 4, model_name: str = "gemma3_12b"):
         self.num_rounds = num_rounds
         self.items_per_round = items_per_round
+        self.model_name = model_name.replace(":", "_")  # Clean up for filename
         self.rounds = []
         self.total_scores = {"agent1": 0.0, "agent2": 0.0}
+        
+        # Initialize CSV logger
+        self.csv_logger = CSVLogger(self.model_name, items_per_round)
+        print(f"{Fore.GREEN}📊 CSV logging to: {self.csv_logger.get_filename()}{Fore.RESET}")
         
         # Initialize agents
         self.agent1 = Agent("gemma3:12b", "systemInstructions.txt")
@@ -50,6 +57,9 @@ class NegotiationSession:
         """
         Execute a single round of negotiation.
         """
+        # Start timing the round
+        round_start_time = time.time()
+        
         print(f"\n{Fore.CYAN}{'='*50}")
         print(f"Round {round_number} Starting")
         print(f"{'='*50}{Fore.RESET}")
@@ -171,6 +181,27 @@ When you reach an agreement, end your message with "AGREE".
         if not round_obj.is_complete:
             print(f"{Fore.RED}Round {round_number} ended without agreement (max turns reached).{Fore.RESET}")
         
+        # Calculate round duration
+        round_end_time = time.time()
+        round_duration = round_end_time - round_start_time
+        
+        # Log this round to CSV
+        if round_obj.is_complete and round_obj.final_allocation:
+            try:
+                log_entry = self.csv_logger.create_log_entry(
+                    round_obj=round_obj,
+                    round_duration=round_duration,
+                    final_allocation=round_obj.final_allocation,
+                    allocation_tracker=self.allocation_tracker,
+                    total_rounds=self.num_rounds
+                )
+                self.csv_logger.log_round(log_entry)
+                print(f"{Fore.GREEN}📊 Round {round_number} logged to CSV (Duration: {round_duration:.2f}s, Turns: {len(round_obj.conversation_history)}){Fore.RESET}")
+            except Exception as e:
+                print(f"{Fore.RED}❌ Failed to log round {round_number}: {e}{Fore.RESET}")
+        else:
+            print(f"{Fore.YELLOW}⚠️  Round {round_number} not logged (incomplete or no allocation){Fore.RESET}")
+        
         print(f"\n{Fore.CYAN}--End Round {round_number}--{Fore.RESET}\n")
         return round_obj
     
@@ -190,6 +221,7 @@ When you reach an agreement, end your message with "AGREE".
         print(f"\n{Fore.MAGENTA}{'='*50}")
         print(f"Negotiation Session Complete!")
         print(f"{'='*50}{Fore.RESET}")
+        print(f"{Fore.GREEN}📊 Session data logged to: {self.csv_logger.get_filepath()}{Fore.RESET}")
         
         # TODO: Calculate and display final scores
         self.display_results()
@@ -322,7 +354,7 @@ async def main():
     Entry point for the negotiation system.
     """
     # Create and run a negotiation session
-    session = NegotiationSession(num_rounds=3, items_per_round=6)
+    session = NegotiationSession(num_rounds=3, items_per_round=4)
     await session.run_negotiation()
 
 if __name__ == "__main__":
