@@ -120,12 +120,13 @@ When you reach an agreement, end your message with "AGREE".
     
     async def _execute_negotiation_loop(self, round_obj: Round, available_items: List[str]) -> bool:
         """
-        Execute the main negotiation loop between agents.
+        Execute the main negotiation loop between agents with improved error handling.
         Returns True if agreement reached, False if max turns exceeded.
         """
         max_turns = MAX_TURNS_PER_ROUND  # Prevent infinite loops
         turn_count = 0
         current_agent_num = round_obj.starting_agent
+        max_retries_per_turn = MAX_RETRIES_PER_INVALID_PROPOSAL  # Maximum retries for invalid proposals
         
         while turn_count < max_turns and not round_obj.is_complete:
             turn_count += 1
@@ -142,11 +143,15 @@ When you reach an agreement, end your message with "AGREE".
                 current_color = Fore.BLUE
                 other_agent_num = 1
             
-            # Generate and process agent response
-            response = await self._process_agent_turn(
+            # Process agent turn with retry logic for invalid proposals
+            response, turn_successful = await self._process_agent_turn_with_retry(
                 current_agent, current_agent_num, current_color, turn_count, 
-                round_obj, available_items
+                round_obj, available_items, max_retries_per_turn
             )
+            
+            if not turn_successful:
+                print(f"{Fore.RED}⚠️  Agent {current_agent_num} failed to provide a valid response after {max_retries_per_turn} retries. Ending round.{Fore.RESET}")
+                break
             
             # Add current agent's response to other agent's memory
             other_agent.addToMemory('user', f"Agent {current_agent_num}: {response}")
@@ -163,30 +168,52 @@ When you reach an agreement, end your message with "AGREE".
         
         return round_obj.is_complete
     
-    async def _process_agent_turn(self, current_agent: Agent, current_agent_num: int, 
-                                current_color: str, turn_count: int, round_obj: Round, 
-                                available_items: List[str]) -> str:
+    async def _process_agent_turn_with_retry(self, current_agent: Agent, current_agent_num: int, 
+                                           current_color: str, turn_count: int, round_obj: Round, 
+                                           available_items: List[str], max_retries: int) -> Tuple[str, bool]:
         """
-        Process a single agent's turn in the negotiation.
-        Returns the agent's response.
+        Process a single agent's turn with retry logic for invalid proposals.
+        Returns (agent_response, turn_successful).
         """
-        # Generate response from current agent
-        print(f"{current_color}Agent {current_agent_num}'s turn (Turn {turn_count}):{Fore.RESET}")
-        response = await current_agent.generateResponse()
-        print(f"{current_color}Agent {current_agent_num}: {response}{Fore.RESET}\n")
+        retry_count = 0
         
-        # Parse the response for formal proposals
-        proposal = self.message_parser.extract_proposal(response, available_items)
-        if proposal:
-            if proposal.is_valid:
-                print(f"{Fore.YELLOW}✓ Valid proposal detected from Agent {current_agent_num}:{Fore.RESET}")
-                print(f"{Fore.YELLOW}  Agent 1: {proposal.agent1_items}{Fore.RESET}")
-                print(f"{Fore.YELLOW}  Agent 2: {proposal.agent2_items}{Fore.RESET}")
-                self.allocation_tracker.update_proposal(round_obj.round_number, current_agent_num, proposal)
+        while retry_count <= max_retries:
+            # Generate response from current agent
+            if retry_count == 0:
+                print(f"{current_color}Agent {current_agent_num}'s turn (Turn {turn_count}):{Fore.RESET}")
             else:
-                print(f"{Fore.RED}✗ Invalid proposal from Agent {current_agent_num}: {proposal.error_message}{Fore.RESET}")
+                print(f"{current_color}Agent {current_agent_num} retry {retry_count} (Turn {turn_count}):{Fore.RESET}")
+            
+            response = await current_agent.generateResponse()
+            print(f"{current_color}Agent {current_agent_num}: {response}{Fore.RESET}\n")
+            
+            # Parse the response for formal proposals
+            proposal = self.message_parser.extract_proposal(response, available_items)
+            
+            if proposal:
+                if proposal.is_valid:
+                    print(f"{Fore.YELLOW}✓ Valid proposal detected from Agent {current_agent_num}:{Fore.RESET}")
+                    self.allocation_tracker.update_proposal(round_obj.round_number, current_agent_num, proposal)
+                    break  # Valid proposal found, exit retry loop
+                else:
+                    print(f"{Fore.RED}✗ Invalid proposal from Agent {current_agent_num}: {proposal.error_message}{Fore.RESET}")
+                    if retry_count < max_retries:
+                        # Provide feedback to help the agent correct their mistake
+                        feedback = self._generate_proposal_feedback(proposal.error_message, available_items)
+                        current_agent.addToMemory('user', feedback)
+                        print(f"{Fore.YELLOW}🔄 Providing feedback and retrying...{Fore.RESET}")
+                        retry_count += 1
+                        continue
+                    else:
+                        print(f"{Fore.RED}❌ Agent {current_agent_num} exceeded maximum retries for valid proposal{Fore.RESET}")
+                        return response, False
+            else:
+                # No proposal detected, this is acceptable (agent might just be negotiating)
+                break
+            
+            retry_count += 1
         
-        # Check for agreement
+        # Check for agreement (regardless of proposal validity)
         if self.message_parser.contains_agreement(response):
             print(f"{Fore.CYAN}Agent {current_agent_num} agreed!{Fore.RESET}")
             self.allocation_tracker.record_agreement(round_obj.round_number, current_agent_num)
@@ -199,6 +226,38 @@ When you reach an agreement, end your message with "AGREE".
                 round_obj.is_complete = True
                 round_obj.final_allocation = final_allocation
         
+        return response, True
+    
+    def _generate_proposal_feedback(self, error_message: str, available_items: List[str]) -> str:
+        """
+        Generate helpful feedback for agents when they make invalid proposals.
+        """
+        feedback = f"Your previous proposal was invalid: {error_message}\n\n"
+        feedback += "Please make a new proposal using the correct format:\n"
+        feedback += f"Available items for this round: {available_items}\n"
+        feedback += "Use this exact format:\n\n"
+        feedback += "PROPOSAL {\n"
+        feedback += '  "agent1": ["ItemA", "ItemB"],\n'
+        feedback += '  "agent2": ["ItemC", "ItemD"]\n'
+        feedback += "}\n\n"
+        feedback += "Remember:\n"
+        feedback += "- Every item must be allocated to exactly one agent\n"
+        feedback += "- Use the exact item names provided\n"
+        feedback += "- The JSON must be valid and complete"
+        
+        return feedback
+
+    async def _process_agent_turn(self, current_agent: Agent, current_agent_num: int, 
+                                current_color: str, turn_count: int, round_obj: Round, 
+                                available_items: List[str]) -> str:
+        """
+        Process a single agent's turn in the negotiation (legacy method for compatibility).
+        Returns the agent's response.
+        """
+        response, _ = await self._process_agent_turn_with_retry(
+            current_agent, current_agent_num, current_color, turn_count, 
+            round_obj, available_items, max_retries=0  # No retries in legacy mode
+        )
         return response
     
     def _log_round_completion(self, round_obj: Round, round_duration: float, success: bool):
@@ -346,18 +405,6 @@ When you reach an agreement, end your message with "AGREE".
             
             print(f"\n{Fore.CYAN}EFFICIENCY METRICS:{Fore.RESET}")
             print(f"Run analyze_results.py for detailed Pareto optimality analysis")
-            
-            # Determine winner
-            if total_agent1_value > total_agent2_value:
-                winner = "Agent 1"
-                margin = total_agent1_value - total_agent2_value
-                print(f"\n{Fore.GREEN}🏆 SESSION WINNER: {winner} (margin: +{margin:.2f}){Fore.RESET}")
-            elif total_agent2_value > total_agent1_value:
-                winner = "Agent 2"
-                margin = total_agent2_value - total_agent1_value
-                print(f"\n{Fore.GREEN}🏆 SESSION WINNER: {winner} (margin: +{margin:.2f}){Fore.RESET}")
-            else:
-                print(f"\n{Fore.YELLOW}🤝 SESSION RESULT: TIE{Fore.RESET}")
         
         # Detailed analysis for each completed round
         # Summary message
