@@ -44,7 +44,12 @@ class Agent:
                 raise ValueError("tool_call_id must be provided for role 'tool'")
             self.memory.append(ToolMessage(content=content, tool_call_id=tool_call_id))
         else:
-            raise ValueError(f"Unknown role: {role}") 
+            raise ValueError(f"Unknown role: {role}")
+    
+    def reset_memory(self):
+        """Reset memory to only contain the original system instructions."""
+        original_system_message = self.importInstructions()
+        self.memory = [original_system_message] 
 
     async def generateResponse(self, inputTextRole=None, inputText=None): # Generate response based on input
         try:

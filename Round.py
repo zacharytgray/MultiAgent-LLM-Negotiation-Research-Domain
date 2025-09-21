@@ -1,3 +1,7 @@
+from typing import List, Dict, Optional, Tuple
+from Item import Item
+from ollamaAgentModule import Agent
+
 class Round:
     """
     Manages a single round of negotiation between two agents.
