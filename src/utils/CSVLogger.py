@@ -29,6 +29,12 @@ class RawNegotiationLogEntry:
     agent1_type: str
     agent2_type: str
     
+    # Boulware agent parameters (if applicable)
+    boulware_initial_threshold: Optional[float]
+    boulware_decrease_rate: Optional[float] 
+    boulware_min_threshold: Optional[float]
+    boulware_final_threshold: Optional[float]
+    
     # Round identification
     round_number: int
     total_rounds: int
@@ -88,7 +94,11 @@ class CSVLogger:
                         allocation_tracker: Any,
                         total_rounds: int,
                         agent1_type: str = "unknown",
-                        agent2_type: str = "unknown") -> RawNegotiationLogEntry:
+                        agent2_type: str = "unknown",
+                        boulware_initial_threshold: Optional[float] = None,
+                        boulware_decrease_rate: Optional[float] = None,
+                        boulware_min_threshold: Optional[float] = None,
+                        boulware_final_threshold: Optional[float] = None) -> RawNegotiationLogEntry:
         """
         Create a raw log entry for a negotiation round without analysis metrics.
         """
@@ -140,6 +150,12 @@ class CSVLogger:
             # Agent types
             agent1_type=agent1_type,
             agent2_type=agent2_type,
+            
+            # Boulware agent parameters (if applicable)
+            boulware_initial_threshold=boulware_initial_threshold,
+            boulware_decrease_rate=boulware_decrease_rate,
+            boulware_min_threshold=boulware_min_threshold,
+            boulware_final_threshold=boulware_final_threshold,
             
             # Round identification
             round_number=round_obj.round_number,

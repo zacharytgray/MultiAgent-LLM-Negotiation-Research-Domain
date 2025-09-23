@@ -425,6 +425,9 @@ Present this proposal naturally as if you determined it through your own strateg
         """
         if success and round_obj.final_allocation:
             try:
+                # Extract Boulware parameters if any agent is a Boulware agent
+                boulware_params = self._extract_boulware_parameters()
+                
                 log_entry = self.csv_logger.create_log_entry(
                     round_obj=round_obj,
                     round_duration=round_duration,
@@ -432,7 +435,8 @@ Present this proposal naturally as if you determined it through your own strateg
                     allocation_tracker=self.allocation_tracker,
                     total_rounds=self.num_rounds,
                     agent1_type=self.agent1_type,
-                    agent2_type=self.agent2_type
+                    agent2_type=self.agent2_type,
+                    **boulware_params
                 )
                 self.csv_logger.log_round(log_entry)
                 print(f"{Fore.GREEN}📊 Round {round_obj.round_number} logged to CSV (Duration: {round_duration:.2f}s, Turns: {len(round_obj.conversation_history)}){Fore.RESET}")
@@ -442,6 +446,34 @@ Present this proposal naturally as if you determined it through your own strateg
             print(f"{Fore.YELLOW}⚠️  Round {round_obj.round_number} not logged (incomplete or no allocation){Fore.RESET}")
         
         print(f"\n{Fore.CYAN}--End Round {round_obj.round_number}--{Fore.RESET}\n")
+
+    def _extract_boulware_parameters(self) -> dict:
+        """
+        Extract Boulware agent parameters for logging.
+        Returns a dict with Boulware parameters if any agent is a Boulware agent.
+        """
+        # Import here to avoid circular import
+        from src.agents.boulware_agent import BoulwareAgent
+        
+        # Initialize all parameters as None
+        boulware_params = {
+            'boulware_initial_threshold': None,
+            'boulware_decrease_rate': None,
+            'boulware_min_threshold': None,
+            'boulware_final_threshold': None
+        }
+        
+        # Check both agents for Boulware parameters
+        for agent in [self.agent1, self.agent2]:
+            if isinstance(agent, BoulwareAgent):
+                # Get the parameters from the first Boulware agent found
+                boulware_params['boulware_initial_threshold'] = agent.initial_threshold
+                boulware_params['boulware_decrease_rate'] = agent.decrease_rate
+                boulware_params['boulware_min_threshold'] = agent.min_threshold
+                boulware_params['boulware_final_threshold'] = agent.current_threshold
+                break  # Use parameters from first Boulware agent found
+                
+        return boulware_params
     
     async def run_round(self, round_number: int) -> Round:
         """

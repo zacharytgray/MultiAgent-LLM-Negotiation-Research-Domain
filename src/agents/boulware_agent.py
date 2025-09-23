@@ -9,6 +9,7 @@ from src.core.Item import Item
 from src.agents.base_agent import BaseAgent
 from src.agents.ollamaAgentModule import Agent as OllamaAgent
 from src.utils.MessageParser import ParsedProposal
+from config.settings import BOULWARE_INITIAL_THRESHOLD, BOULWARE_DECREASE_RATE, BOULWARE_MIN_THRESHOLD
 
 
 class BoulwareAgent(BaseAgent):
@@ -18,7 +19,10 @@ class BoulwareAgent(BaseAgent):
     """
     
     def __init__(self, agent_id: int, model_name: str, system_instructions_file: str, 
-                 initial_threshold: float = 0.80, use_tools: bool = False):
+                 initial_threshold: Optional[float] = None, 
+                 decrease_rate: Optional[float] = None,
+                 min_threshold: Optional[float] = None,
+                 use_tools: bool = False):
         """
         Initialize the Boulware agent.
         
@@ -26,12 +30,16 @@ class BoulwareAgent(BaseAgent):
             agent_id: Unique identifier for this agent (1 or 2)
             model_name: Name of the LLM model to use
             system_instructions_file: Path to system instructions file
-            initial_threshold: Starting threshold percentage (default 0.80)
+            initial_threshold: Starting threshold percentage (defaults to settings.BOULWARE_INITIAL_THRESHOLD)
+            decrease_rate: Amount to decrease threshold per turn (defaults to settings.BOULWARE_DECREASE_RATE)
+            min_threshold: Minimum threshold value (defaults to settings.BOULWARE_MIN_THRESHOLD)
             use_tools: Whether to enable tool usage
         """
         super().__init__(agent_id, model_name, system_instructions_file)
-        self.initial_threshold = initial_threshold
-        self.current_threshold = initial_threshold
+        self.initial_threshold = initial_threshold if initial_threshold is not None else BOULWARE_INITIAL_THRESHOLD
+        self.decrease_rate = decrease_rate if decrease_rate is not None else BOULWARE_DECREASE_RATE
+        self.min_threshold = min_threshold if min_threshold is not None else BOULWARE_MIN_THRESHOLD
+        self.current_threshold = self.initial_threshold
         self.use_tools = use_tools
         self.ranked_allocations = []
         self.all_possible_allocations = []
@@ -137,10 +145,9 @@ class BoulwareAgent(BaseAgent):
         Args:
             turn_number: Current turn number
         """
-        # Simple linear decrease - can be made more sophisticated
-        # Decrease by 10% each turn, but don't go below 0.1
-        decrease_rate = 0.05
-        self.current_threshold = max(0.1, self.initial_threshold - (turn_number * decrease_rate))
+        # Linear decrease using configurable rate
+        self.current_threshold = max(self.min_threshold, 
+                                   self.initial_threshold - (turn_number * self.decrease_rate))
     
     async def generate_response(self) -> str:
         """

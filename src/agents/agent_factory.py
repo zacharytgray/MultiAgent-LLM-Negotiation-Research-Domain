@@ -3,10 +3,11 @@ Agent factory for creating different types of negotiation agents.
 Supports easy addition of new agent types and configuration.
 """
 
-from typing import Dict, Any, Type
+from typing import Dict, Any, Type, Optional
 from src.agents.base_agent import BaseAgent
 from src.agents.default_agent import DefaultAgent
 from src.agents.boulware_agent import BoulwareAgent
+from config.settings import BOULWARE_INITIAL_THRESHOLD, BOULWARE_DECREASE_RATE, BOULWARE_MIN_THRESHOLD
 
 
 class AgentFactory:
@@ -109,19 +110,26 @@ class AgentConfig:
         }
     
     @staticmethod
-    def boulware_config(initial_threshold: float = 0.80, use_tools: bool = False) -> Dict[str, Any]:
+    def boulware_config(initial_threshold: Optional[float] = None, 
+                       decrease_rate: Optional[float] = None,
+                       min_threshold: Optional[float] = None,
+                       use_tools: bool = False) -> Dict[str, Any]:
         """
         Get configuration for Boulware agents.
         
         Args:
-            initial_threshold: Starting threshold percentage (default 0.80)
+            initial_threshold: Starting threshold percentage (defaults to settings value)
+            decrease_rate: Amount to decrease threshold per turn (defaults to settings value)
+            min_threshold: Minimum threshold value (defaults to settings value)
             use_tools: Whether to enable tool usage
             
         Returns:
             Dict: Configuration parameters
         """
         return {
-            "initial_threshold": initial_threshold,
+            "initial_threshold": initial_threshold if initial_threshold is not None else BOULWARE_INITIAL_THRESHOLD,
+            "decrease_rate": decrease_rate if decrease_rate is not None else BOULWARE_DECREASE_RATE,
+            "min_threshold": min_threshold if min_threshold is not None else BOULWARE_MIN_THRESHOLD,
             "use_tools": use_tools
         }
     

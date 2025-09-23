@@ -85,6 +85,15 @@ EFFICIENCY_THRESHOLDS = {
 }
 
 # =============================================================================
+# AGENT-SPECIFIC SETTINGS
+# =============================================================================
+
+# Boulware agent hyperparameters
+BOULWARE_INITIAL_THRESHOLD = 0.85  # Starting threshold percentage (0.0 to 1.0)
+BOULWARE_DECREASE_RATE = 0.03      # Amount to decrease threshold per turn
+BOULWARE_MIN_THRESHOLD = 0.1       # Minimum threshold (won't go below this)
+
+# =============================================================================
 # VALIDATION SETTINGS
 # =============================================================================
 
