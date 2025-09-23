@@ -13,6 +13,19 @@ class ParsedProposal:
     is_valid: bool
     error_message: Optional[str] = None
     raw_json: Optional[Dict] = None
+    
+    @property
+    def allocation(self) -> Dict[str, List[str]]:
+        """
+        Get the allocation as a dictionary.
+        
+        Returns:
+            Dict with agent1 and agent2 item lists
+        """
+        return {
+            "agent1": self.agent1_items,
+            "agent2": self.agent2_items
+        }
 
 class MessageParser:
     """

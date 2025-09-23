@@ -3,7 +3,8 @@ import random
 import time
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
-from src.agents.ollamaAgentModule import Agent
+from src.agents.base_agent import BaseAgent
+from src.agents.agent_factory import AgentFactory, AgentConfig
 from colorama import Fore, init
 from src.core.Item import Item
 from src.core.Round import Round
@@ -19,24 +20,59 @@ class NegotiationSession:
     """
     Main class that manages the entire negotiation session across multiple rounds.
     """
-    def __init__(self, num_rounds: int, items_per_round: int = DEFAULT_ITEMS_PER_ROUND, model_name: str = DEFAULT_MODEL_NAME):
+    def __init__(self, num_rounds: int, items_per_round: int = DEFAULT_ITEMS_PER_ROUND, 
+                 model_name: str = DEFAULT_MODEL_NAME, agent1_type: str = "default", 
+                 agent2_type: str = "default", agent1_config: Optional[Dict] = None, 
+                 agent2_config: Optional[Dict] = None):
         self.num_rounds = num_rounds
         self.items_per_round = items_per_round
         self.model_name = model_name.replace(":", "_")  # Clean up for filename
+        self.agent1_type = agent1_type
+        self.agent2_type = agent2_type
         self.rounds = []
         self.total_scores = {"agent1": 0.0, "agent2": 0.0}
         
         # Initialize CSV logger
-        self.csv_logger = CSVLogger(self.model_name, items_per_round)
+        session_label = f"{agent1_type}_vs_{agent2_type}"
+        self.csv_logger = CSVLogger(f"{self.model_name}_{session_label}", items_per_round)
         print(f"{Fore.GREEN}📊 CSV logging to: {self.csv_logger.get_filename()}{Fore.RESET}")
         
-        # Initialize agents
-        self.agent1 = Agent(DEFAULT_MODEL_NAME, SYSTEM_INSTRUCTIONS_FILE)
-        self.agent2 = Agent(DEFAULT_MODEL_NAME, SYSTEM_INSTRUCTIONS_FILE)
+        # Get agent configurations
+        if agent1_config is None:
+            agent1_config = AgentConfig.get_config_for_type(agent1_type)
+        if agent2_config is None:
+            agent2_config = AgentConfig.get_config_for_type(agent2_type)
+        
+        # Determine system instructions files for each agent
+        agent1_instructions = self._get_system_instructions_file(agent1_type)
+        agent2_instructions = self._get_system_instructions_file(agent2_type)
+        
+        # Initialize agents using factory
+        self.agent1 = AgentFactory.create_agent(
+            agent1_type, 1, model_name, agent1_instructions, **agent1_config
+        )
+        self.agent2 = AgentFactory.create_agent(
+            agent2_type, 2, model_name, agent2_instructions, **agent2_config
+        )
         
         # Initialize proposal tracking components
         self.message_parser = MessageParser()
         self.allocation_tracker = AllocationTracker()
+        
+    def _get_system_instructions_file(self, agent_type: str) -> str:
+        """
+        Get the appropriate system instructions file for the given agent type.
+        
+        Args:
+            agent_type: Type of agent
+            
+        Returns:
+            str: Path to system instructions file
+        """
+        if agent_type in ["boulware"]:  # Deterministic agents
+            return "config/deterministic_agent_instructions.txt"
+        else:
+            return SYSTEM_INSTRUCTIONS_FILE
         
     def generate_random_items(self, round_number: int) -> List[Item]:
         """
@@ -88,10 +124,14 @@ class NegotiationSession:
         """
         Prepare and set initial context for both agents.
         """
+        # Set items for both agents
+        self.agent1.set_items(round_obj.items)
+        self.agent2.set_items(round_obj.items)
+        
         agent1_context = f"""
 --Round Start--
 You are Agent 1 in a negotiation. Your goal is to maximize your own value.
-Items: {round_obj.get_items_for_agent(1)}
+Items: {self.agent1.get_agent_items_context()}
 
 You can only see your own values (agent1Value). The other agent's values are unknown to you.
 Negotiate with Agent 2 to get the best items for yourself.
@@ -101,7 +141,7 @@ When you reach an agreement, end your message with "AGREE".
         agent2_context = f"""
 --Round Start--
 You are Agent 2 in a negotiation. Your goal is to maximize your own value.
-Items: {round_obj.get_items_for_agent(2)}
+Items: {self.agent2.get_agent_items_context()}
 
 You can only see your own values (agent2Value). The other agent's values are unknown to you.
 Negotiate with Agent 1 to get the best items for yourself.
@@ -109,14 +149,14 @@ When you reach an agreement, end your message with "AGREE".
 """
         
         # Add context to agents
-        self.agent1.addToMemory('system', agent1_context)
-        self.agent2.addToMemory('system', agent2_context)
+        self.agent1.add_to_memory('system', agent1_context)
+        self.agent2.add_to_memory('system', agent2_context)
         
         # Give the starting agent an initial prompt to begin the negotiation
         if round_obj.starting_agent == 1:
-            self.agent1.addToMemory('user', "Please begin the negotiation by making your opening proposal.")
+            self.agent1.add_to_memory('user', "Please begin the negotiation by making your opening proposal.")
         else:
-            self.agent2.addToMemory('user', "Please begin the negotiation by making your opening proposal.")
+            self.agent2.add_to_memory('user', "Please begin the negotiation by making your opening proposal.")
     
     async def _execute_negotiation_loop(self, round_obj: Round, available_items: List[str]) -> bool:
         """
@@ -154,7 +194,7 @@ When you reach an agreement, end your message with "AGREE".
                 break
             
             # Add current agent's response to other agent's memory
-            other_agent.addToMemory('user', f"Agent {current_agent_num}: {response}")
+            other_agent.add_to_memory('user', f"Agent {current_agent_num}: {response}")
             
             # Store conversation history
             round_obj.conversation_history.append((current_agent_num, response))
@@ -168,13 +208,22 @@ When you reach an agreement, end your message with "AGREE".
         
         return round_obj.is_complete
     
-    async def _process_agent_turn_with_retry(self, current_agent: Agent, current_agent_num: int, 
+    async def _process_agent_turn_with_retry(self, current_agent: BaseAgent, current_agent_num: int, 
                                            current_color: str, turn_count: int, round_obj: Round, 
                                            available_items: List[str], max_retries: int) -> Tuple[str, bool]:
         """
         Process a single agent's turn with retry logic for invalid proposals.
+        Now includes support for deterministic agents.
         Returns (agent_response, turn_successful).
         """
+        # Check if this agent should make a deterministic proposal
+        if current_agent.should_make_deterministic_proposal():
+            return await self._process_deterministic_agent_turn(
+                current_agent, current_agent_num, current_color, turn_count, 
+                round_obj, available_items, max_retries
+            )
+        
+        # Regular agent processing with retry logic
         retry_count = 0
         
         while retry_count <= max_retries:
@@ -184,7 +233,7 @@ When you reach an agreement, end your message with "AGREE".
             else:
                 print(f"{current_color}Agent {current_agent_num} retry {retry_count} (Turn {turn_count}):{Fore.RESET}")
             
-            response = await current_agent.generateResponse()
+            response = await current_agent.generate_response()
             print(f"{current_color}Agent {current_agent_num}: {response}{Fore.RESET}\n")
             
             # Parse the response for formal proposals
@@ -200,7 +249,7 @@ When you reach an agreement, end your message with "AGREE".
                     if retry_count < max_retries:
                         # Provide feedback to help the agent correct their mistake
                         feedback = self._generate_proposal_feedback(proposal.error_message, available_items)
-                        current_agent.addToMemory('user', feedback)
+                        current_agent.add_to_memory('user', feedback)
                         print(f"{Fore.YELLOW}🔄 Providing feedback and retrying...{Fore.RESET}")
                         retry_count += 1
                         continue
@@ -228,6 +277,116 @@ When you reach an agreement, end your message with "AGREE".
         
         return response, True
     
+    async def _process_deterministic_agent_turn(self, current_agent: BaseAgent, current_agent_num: int,
+                                              current_color: str, turn_count: int, round_obj: Round,
+                                              available_items: List[str], max_retries: int) -> Tuple[str, bool]:
+        """
+        Process a turn for a deterministic agent (like Boulware).
+        Includes validation that the output matches the intended deterministic proposal.
+        """
+        # Update agent strategy state
+        current_agent.update_strategy_state(turn_count)
+        
+        # Get current proposal on the table
+        current_proposal = self.allocation_tracker.get_current_proposal(round_obj.round_number)
+        
+        # Check if agent should accept current proposal
+        if current_proposal and current_agent.should_accept_proposal(current_proposal):
+            print(f"{current_color}Agent {current_agent_num}'s turn (Turn {turn_count}) - Should Accept:{Fore.RESET}")
+            
+            # Instruct agent to accept
+            accept_instruction = "The current proposal is acceptable to you. Please respond by agreeing to it and end your message with 'AGREE'."
+            current_agent.add_to_memory('user', accept_instruction)
+            
+            response = await current_agent.generate_response()
+            print(f"{current_color}Agent {current_agent_num}: {response}{Fore.RESET}\n")
+            
+            # Check for agreement
+            if self.message_parser.contains_agreement(response):
+                print(f"{Fore.CYAN}Agent {current_agent_num} agreed!{Fore.RESET}")
+                self.allocation_tracker.record_agreement(round_obj.round_number, current_agent_num)
+                
+                # Check if round is complete
+                if self.allocation_tracker.is_round_complete(round_obj.round_number):
+                    final_allocation = self.allocation_tracker.get_final_allocation(round_obj.round_number)
+                    print(f"{Fore.CYAN}Both agents have agreed! Round {round_obj.round_number} complete.{Fore.RESET}")
+                    print(f"{Fore.CYAN}Final allocation: {final_allocation}{Fore.RESET}")
+                    round_obj.is_complete = True
+                    round_obj.final_allocation = final_allocation
+            
+            return response, True
+        
+        # Agent should make a deterministic proposal
+        intended_proposal = current_agent.get_deterministic_proposal(current_proposal)
+        
+        if not intended_proposal:
+            print(f"{Fore.RED}❌ Agent {current_agent_num} could not generate deterministic proposal{Fore.RESET}")
+            return "I'm unable to make a proposal at this time.", False
+        
+        # Prepare instruction for the agent
+        proposal_instruction = self._create_deterministic_proposal_instruction(intended_proposal)
+        
+        # Retry logic for deterministic agents
+        retry_count = 0
+        
+        while retry_count <= max_retries:
+            if retry_count == 0:
+                print(f"{current_color}Agent {current_agent_num}'s turn (Turn {turn_count}) - Deterministic:{Fore.RESET}")
+            else:
+                print(f"{current_color}Agent {current_agent_num} deterministic retry {retry_count} (Turn {turn_count}):{Fore.RESET}")
+            
+            # Give agent the deterministic proposal instruction
+            current_agent.add_to_memory('user', proposal_instruction)
+            
+            response = await current_agent.generate_response()
+            print(f"{current_color}Agent {current_agent_num}: {response}{Fore.RESET}\n")
+            
+            # Validate that the output matches the intended proposal
+            if current_agent.validate_output_matches_intent(response, intended_proposal):
+                print(f"{Fore.GREEN}✓ Deterministic agent output validated{Fore.RESET}")
+                
+                # Extract and register the proposal
+                proposal = self.message_parser.extract_proposal(response, available_items)
+                if proposal and proposal.is_valid:
+                    print(f"{Fore.YELLOW}✓ Valid deterministic proposal from Agent {current_agent_num}:{Fore.RESET}")
+                    self.allocation_tracker.update_proposal(round_obj.round_number, current_agent_num, proposal)
+                    return response, True
+                else:
+                    print(f"{Fore.RED}✗ Deterministic proposal extraction failed{Fore.RESET}")
+            else:
+                print(f"{Fore.RED}✗ Deterministic agent output validation failed{Fore.RESET}")
+            
+            retry_count += 1
+            if retry_count <= max_retries:
+                print(f"{Fore.YELLOW}🔄 Retrying deterministic agent...{Fore.RESET}")
+        
+        print(f"{Fore.RED}❌ Deterministic Agent {current_agent_num} failed validation after {max_retries} retries{Fore.RESET}")
+        return response, False
+    
+    def _create_deterministic_proposal_instruction(self, intended_proposal: Dict) -> str:
+        """
+        Create instruction for deterministic agent to make specific proposal.
+        
+        Args:
+            intended_proposal: The allocation the agent should propose
+            
+        Returns:
+            str: Instruction text for the agent
+        """
+        agent1_items = intended_proposal.get("agent1", [])
+        agent2_items = intended_proposal.get("agent2", [])
+        
+        instruction = f"""Please make the following proposal in your negotiation style:
+
+PROPOSAL {{
+  "agent1": {agent1_items},
+  "agent2": {agent2_items}
+}}
+
+Present this proposal naturally as if you determined it through your own strategic thinking. Explain briefly why you think this allocation makes sense."""
+        
+        return instruction
+    
     def _generate_proposal_feedback(self, error_message: str, available_items: List[str]) -> str:
         """
         Generate helpful feedback for agents when they make invalid proposals.
@@ -247,7 +406,7 @@ When you reach an agreement, end your message with "AGREE".
         
         return feedback
 
-    async def _process_agent_turn(self, current_agent: Agent, current_agent_num: int, 
+    async def _process_agent_turn(self, current_agent: BaseAgent, current_agent_num: int, 
                                 current_color: str, turn_count: int, round_obj: Round, 
                                 available_items: List[str]) -> str:
         """
@@ -271,7 +430,9 @@ When you reach an agreement, end your message with "AGREE".
                     round_duration=round_duration,
                     final_allocation=round_obj.final_allocation,
                     allocation_tracker=self.allocation_tracker,
-                    total_rounds=self.num_rounds
+                    total_rounds=self.num_rounds,
+                    agent1_type=self.agent1_type,
+                    agent2_type=self.agent2_type
                 )
                 self.csv_logger.log_round(log_entry)
                 print(f"{Fore.GREEN}📊 Round {round_obj.round_number} logged to CSV (Duration: {round_duration:.2f}s, Turns: {len(round_obj.conversation_history)}){Fore.RESET}")
@@ -417,10 +578,55 @@ When you reach an agreement, end your message with "AGREE".
 async def main():
     """
     Entry point for the negotiation system.
+    Shows examples of different agent combinations.
     """
-    # Create and run a negotiation session
-    session = NegotiationSession(num_rounds=DEFAULT_NUM_ROUNDS, items_per_round=DEFAULT_ITEMS_PER_ROUND)
+    print(f"{Fore.MAGENTA}🤖 Multi-Agent Negotiation System{Fore.RESET}")
+    print(f"{Fore.CYAN}Available agent types: {AgentFactory.get_available_types()}{Fore.RESET}")
+    
+    # Example 1: Default vs Default (original behavior)
+    # print(f"\n{Fore.YELLOW}=== Example 1: Default vs Default ==={Fore.RESET}")
+    # session1 = NegotiationSession(
+    #     num_rounds=2, 
+    #     items_per_round=4,
+    #     agent1_type="default",
+    #     agent2_type="default"
+    # )
+    # await session1.run_negotiation()
+    
+    # Example 2: Default vs Boulware
+    print(f"\n{Fore.YELLOW}=== Example 2: Default vs Boulware ==={Fore.RESET}")
+    session2 = NegotiationSession(
+        num_rounds=3, 
+        items_per_round=4,
+        agent1_type="default",
+        agent2_type="boulware",
+        agent2_config={"initial_threshold": 0.80}
+    )
+    await session2.run_negotiation()
+
+
+async def run_specific_matchup(agent1_type: str, agent2_type: str, num_rounds: int = 3,
+                              agent1_config: Optional[Dict] = None, agent2_config: Optional[Dict] = None):
+    """
+    Run a specific agent matchup for testing.
+    
+    Args:
+        agent1_type: Type of agent 1
+        agent2_type: Type of agent 2
+        num_rounds: Number of rounds to run
+        agent1_config: Configuration for agent 1
+        agent2_config: Configuration for agent 2
+    """
+    session = NegotiationSession(
+        num_rounds=num_rounds,
+        items_per_round=DEFAULT_ITEMS_PER_ROUND,
+        agent1_type=agent1_type,
+        agent2_type=agent2_type,
+        agent1_config=agent1_config,
+        agent2_config=agent2_config
+    )
     await session.run_negotiation()
+    return session
 
 if __name__ == "__main__":
     asyncio.run(main())

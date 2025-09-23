@@ -25,6 +25,10 @@ class RawNegotiationLogEntry:
     timestamp: str
     date: str
     
+    # Agent types
+    agent1_type: str
+    agent2_type: str
+    
     # Round identification
     round_number: int
     total_rounds: int
@@ -82,7 +86,9 @@ class CSVLogger:
                         round_duration: float,
                         final_allocation: Dict[str, List[str]],
                         allocation_tracker: Any,
-                        total_rounds: int) -> RawNegotiationLogEntry:
+                        total_rounds: int,
+                        agent1_type: str = "unknown",
+                        agent2_type: str = "unknown") -> RawNegotiationLogEntry:
         """
         Create a raw log entry for a negotiation round without analysis metrics.
         """
@@ -130,6 +136,10 @@ class CSVLogger:
             num_items=self.num_items,
             timestamp=datetime.now().isoformat(),
             date=datetime.now().strftime('%Y-%m-%d'),
+            
+            # Agent types
+            agent1_type=agent1_type,
+            agent2_type=agent2_type,
             
             # Round identification
             round_number=round_obj.round_number,
