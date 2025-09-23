@@ -178,16 +178,7 @@ Post-processing analysis adds:
 - **Negotiation Dynamics**: Proposal patterns, agreement timing
 - **Strategy Metrics**: Turn counts, proposal validation rates
 
-## 🎓 Research Applications
-
-This framework enables:
-- **Behavioral AI Research**: Understanding LLM negotiation strategies
-- **Game Theory Studies**: Empirical analysis of multi-agent interactions  
-- **Efficiency Analysis**: Measuring Pareto optimality in AI negotiations
-- **Longitudinal Studies**: Strategy evolution across multiple rounds
-- **Comparative Analysis**: Different models, parameters, and conditions
-
-## 🤝 Enhanced Negotiation Protocol
+## 🤝 Negotiation Protocol
 
 ### Formal Proposal System
 Agents use structured JSON format for proposals:
