@@ -626,14 +626,14 @@ async def main():
     print(f"{Fore.CYAN}Available agent types: {AgentFactory.get_available_types()}{Fore.RESET}")
     
     # Example 1: Default vs Default (original behavior)
-    # print(f"\n{Fore.YELLOW}=== Example 1: Default vs Default ==={Fore.RESET}")
-    # session1 = NegotiationSession(
-    #     num_rounds=2, 
-    #     items_per_round=4,
-    #     agent1_type="default",
-    #     agent2_type="default"
-    # )
-    # await session1.run_negotiation()
+    print(f"\n{Fore.YELLOW}=== Example 1: Default vs Default ==={Fore.RESET}")
+    session1 = NegotiationSession(
+        num_rounds=100, 
+        items_per_round=4,
+        agent1_type="default",
+        agent2_type="default"
+    )
+    await session1.run_negotiation()
     
     # Example 2: Default vs Boulware
     # print(f"\n{Fore.YELLOW}=== Example 2: Default vs Boulware ==={Fore.RESET}")
@@ -668,24 +668,24 @@ async def main():
     # await session4.run_negotiation()
     
     # Example 5: Default vs Rude
-    print(f"\n{Fore.YELLOW}=== Example 5: Default vs Rude ==={Fore.RESET}")
-    session5 = NegotiationSession(
-        num_rounds=2, 
-        items_per_round=4,
-        agent1_type="default",
-        agent2_type="rude"
-    )
-    await session5.run_negotiation()
+    # print(f"\n{Fore.YELLOW}=== Example 5: Default vs Rude ==={Fore.RESET}")
+    # session5 = NegotiationSession(
+    #     num_rounds=2, 
+    #     items_per_round=4,
+    #     agent1_type="default",
+    #     agent2_type="rude"
+    # )
+    # await session5.run_negotiation()
     
     # Example 6: Charming vs Rude
-    print(f"\n{Fore.YELLOW}=== Example 6: Charming vs Rude ==={Fore.RESET}")
-    session6 = NegotiationSession(
-        num_rounds=2, 
-        items_per_round=4,
-        agent1_type="charming",
-        agent2_type="rude"
-    )
-    await session6.run_negotiation()
+    # print(f"\n{Fore.YELLOW}=== Example 6: Charming vs Rude ==={Fore.RESET}")
+    # session6 = NegotiationSession(
+    #     num_rounds=2, 
+    #     items_per_round=4,
+    #     agent1_type="charming",
+    #     agent2_type="rude"
+    # )
+    # await session6.run_negotiation()
 
 
 async def run_specific_matchup(agent1_type: str, agent2_type: str, num_rounds: int = 3,
