@@ -35,6 +35,9 @@ class RawNegotiationLogEntry:
     boulware_min_threshold: Optional[float]
     boulware_final_threshold: Optional[float]
     
+    # Fixed Price agent parameters (if applicable)
+    fixed_price_threshold: Optional[float]
+    
     # Round identification
     round_number: int
     total_rounds: int
@@ -98,7 +101,8 @@ class CSVLogger:
                         boulware_initial_threshold: Optional[float] = None,
                         boulware_decrease_rate: Optional[float] = None,
                         boulware_min_threshold: Optional[float] = None,
-                        boulware_final_threshold: Optional[float] = None) -> RawNegotiationLogEntry:
+                        boulware_final_threshold: Optional[float] = None,
+                        fixed_price_threshold: Optional[float] = None) -> RawNegotiationLogEntry:
         """
         Create a raw log entry for a negotiation round without analysis metrics.
         """
@@ -156,6 +160,9 @@ class CSVLogger:
             boulware_decrease_rate=boulware_decrease_rate,
             boulware_min_threshold=boulware_min_threshold,
             boulware_final_threshold=boulware_final_threshold,
+            
+            # Fixed Price agent parameters (if applicable)
+            fixed_price_threshold=fixed_price_threshold,
             
             # Round identification
             round_number=round_obj.round_number,

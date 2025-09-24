@@ -77,21 +77,55 @@ The system now features a **modular multi-agent architecture** that supports dif
 
 ##### **Boulware Agent** (`boulware_agent.py`) 🆕
 - **Purpose**: Implements the classic Boulware negotiation strategy with deterministic proposals
-- **Strategy**: Starts with high demands (80% threshold) and gradually decreases over turns
+- **Strategy**: Starts with high demands (85% threshold) and gradually decreases over turns
 - **Behavior**: 
   - Calculates welfare-ranked allocations for strategic decision making
   - Uses LLM as a natural language wrapper around deterministic proposals
   - Validates that LLM output matches intended algorithmic strategy
 - **Configurable Parameters**:
-  - `BOULWARE_INITIAL_THRESHOLD`: Starting demand level (default: 0.80)
-  - `BOULWARE_DECREASE_RATE`: Threshold reduction per turn (default: 0.05)  
+  - `BOULWARE_INITIAL_THRESHOLD`: Starting demand level (default: 0.85)
+  - `BOULWARE_DECREASE_RATE`: Threshold reduction per turn (default: 0.03)  
   - `BOULWARE_MIN_THRESHOLD`: Minimum acceptable threshold (default: 0.1)
 - **Best for**: Studying competitive vs. cooperative dynamics
 
-##### **More Agent Types Coming Soon** 🚀
-- Fixed Price Agent (rigid pricing strategies)
-- Charming Agent (socially persuasive tactics)
-- Rude/Bullying Agent (aggressive negotiation styles)
+##### **Fixed Price Agent** (`fixed_price_agent.py`) 🆕
+- **Purpose**: Implements a constant threshold strategy with no concessions
+- **Strategy**: Uses a fixed threshold that never changes throughout the negotiation
+- **Behavior**: 
+  - Calculates welfare-ranked allocations using the same threshold every turn
+  - Makes identical proposals until the opponent meets the threshold requirement
+  - Uses LLM wrapper with deterministic output validation like Boulware
+- **Configurable Parameters**:
+  - `fixed_threshold`: Constant threshold percentage (defaults to `BOULWARE_INITIAL_THRESHOLD`)
+- **Best for**: Studying rigid vs. flexible negotiation strategies
+
+##### **Charming Agent** (`charming_agent.py`) 🆕
+- **Purpose**: Uses enthusiastic and persuasive communication to influence negotiations
+- **Strategy**: Same strategic goals as Default Agent but with charming, sales-oriented personality
+- **Behavior**: 
+  - Employs enthusiastic language and positive superlatives
+  - Makes proposals sound like "incredible opportunities"
+  - Uses charm and persuasion rather than aggressive tactics
+  - Adapts language dynamically to each negotiation context
+- **Communication Style**: 
+  - "This is an absolutely incredible opportunity for both of us!"
+  - "You won't find a better arrangement anywhere else!"
+  - Varies phrases to avoid repetition and maintain authenticity
+- **Best for**: Studying the impact of communication style on negotiation outcomes
+
+##### **Rude Agent** (`rude_agent.py`) 🆕  
+- **Purpose**: Uses aggressive and intimidating communication to pressure opponents
+- **Strategy**: Same strategic goals as Default Agent but with harsh, demanding personality
+- **Behavior**: 
+  - Employs aggressive language and pressure tactics
+  - Makes threats about walking away or finding better alternatives
+  - Shows impatience and dismissiveness toward counter-proposals
+  - Uses intimidation to push for preferred allocations
+- **Communication Style**:
+  - "This is my final offer - take it or leave it!"
+  - "Stop wasting my time with these ridiculous counter-proposals!"
+  - Varies harsh language to maintain pressure without repetition
+- **Best for**: Studying how aggressive communication affects negotiation dynamics
 
 #### Agent Architecture
 
@@ -221,10 +255,25 @@ boulware_agent = AgentFactory.create_agent(
     system_instructions_file="config/system_instructions.txt",
     **boulware_config
 )
+
+# Create a Fixed Price agent with constant threshold
+fixed_price_config = AgentConfig.fixed_price_config(
+    fixed_threshold=0.80  # Never changes throughout negotiation
+)
+
+fixed_price_agent = AgentFactory.create_agent(
+    agent_type="fixed_price",
+    agent_id=3,
+    model_name="gpt-oss:20b",
+    system_instructions_file="config/system_instructions.txt", 
+    **fixed_price_config
+)
 ```
 
-#### Tuning Boulware Agent Behavior
-Edit `config/settings.py` to change default Boulware parameters:
+#### Tuning Agent Behavior
+Edit `config/settings.py` to change default parameters:
+
+**Boulware Agent Strategies:**
 ```python
 # Aggressive strategy: high initial demands, fast concessions
 BOULWARE_INITIAL_THRESHOLD = 0.95
@@ -235,6 +284,18 @@ BOULWARE_MIN_THRESHOLD = 0.20
 BOULWARE_INITIAL_THRESHOLD = 0.70
 BOULWARE_DECREASE_RATE = 0.02
 BOULWARE_MIN_THRESHOLD = 0.05
+```
+
+**Fixed Price Agent Strategies:**
+```python
+# High demand Fixed Price (will only accept very favorable deals)
+fixed_price_config = AgentConfig.fixed_price_config(fixed_threshold=0.90)
+
+# Moderate Fixed Price (more likely to reach agreements)
+fixed_price_config = AgentConfig.fixed_price_config(fixed_threshold=0.70)
+
+# Low demand Fixed Price (accepts most reasonable offers)
+fixed_price_config = AgentConfig.fixed_price_config(fixed_threshold=0.50)
 ```
 
 ### Two-Stage Workflow
@@ -259,7 +320,8 @@ All system parameters can be modified in `config/settings.py`:
 - **Logging Configuration**: Output directories, filename formats
 - **Agent-Specific Settings**: 🆕
   - **Boulware Agent**: Initial threshold, decrease rate, minimum threshold
-  - **Future Agents**: Fixed Price, Charming, Rude/Bullying (coming soon)
+  - **Fixed Price Agent**: Fixed threshold (constant throughout negotiation)
+  - **Future Agents**: Charming, Rude/Bullying (coming soon)
 
 ## 📊 Research Data Output
 
@@ -307,6 +369,66 @@ This gives us both some high-value items. What do you think?"
 3. **Re-run analysis** on existing CSV files (no re-negotiation needed)
 4. **Raw data contains everything**: Items, allocations, conversations, proposals
 
+## 📄 Multi-Agent Configuration Examples
+
+### Creating Sessions with Different Agent Types
+
+```python
+# Example 1: Default vs Charming (communication style study)
+session1 = NegotiationSession(
+    num_rounds=3,
+    items_per_round=4,
+    agent1_type="default",
+    agent2_type="charming"
+)
+
+# Example 2: Charming vs Rude (polar opposite communication styles)
+session2 = NegotiationSession(
+    num_rounds=3,
+    items_per_round=4, 
+    agent1_type="charming",
+    agent2_type="rude"
+)
+
+# Example 3: Default vs Rude (normal vs aggressive communication)
+session3 = NegotiationSession(
+    num_rounds=3,
+    items_per_round=4,
+    agent1_type="default",
+    agent2_type="rude"
+)
+
+# Example 4: Boulware vs Charming (strategic vs persuasive)
+session4 = NegotiationSession(
+    num_rounds=3,
+    items_per_round=4,
+    agent1_type="boulware", 
+    agent2_type="charming",
+    agent1_config={"initial_threshold": 0.80}
+)
+
+# Example 5: Fixed Price vs Rude (rigid vs aggressive)
+session5 = NegotiationSession(
+    num_rounds=3,
+    items_per_round=4,
+    agent1_type="fixed_price",
+    agent2_type="rude",
+    agent1_config={"fixed_threshold": 0.75}
+)
+```
+
+### Available Agent Combinations
+
+| Agent 1 Type | Agent 2 Type | Research Question |
+|--------------|--------------|-------------------|
+| `default` | `charming` | How does charm affect standard negotiation? |
+| `default` | `rude` | How does aggression impact normal negotiations? |
+| `charming` | `rude` | Polar opposite communication styles |
+| `boulware` | `charming` | Strategic concessions vs persuasive charm |
+| `boulware` | `rude` | Strategic concessions vs aggressive pressure |
+| `fixed_price` | `charming` | Rigid demands vs persuasive flexibility |
+| `fixed_price` | `rude` | Rigid demands vs aggressive pressure |
+
 ## 📄 Example Usage
 
 ```bash
@@ -315,6 +437,7 @@ python Negotiation.py
 
 # Run mixed agent negotiations by modifying Negotiation.py:
 # - Change agent1_type = "default" and agent2_type = "boulware" 
+# - Change agent1_type = "fixed_price" and agent2_type = "boulware"
 # - Or create custom agent configurations in code
 
 # Analyze the results with all metrics
@@ -327,11 +450,17 @@ ls results/
 ## 🧪 Research Applications
 
 This framework enables studying:
-- **Strategy Comparison**: Default vs Boulware vs future agent types
-- **Behavioral Analysis**: How different strategies affect negotiation outcomes
+- **Strategy Comparison**: Default vs Boulware vs Fixed Price vs Charming vs Rude agent interactions
+- **Behavioral Analysis**: How different strategies and communication styles affect negotiation outcomes
+- **Communication Impact**: How charm vs aggression vs neutral tone affects agreement rates and outcomes
+- **Personality vs Strategy**: Comparing pure strategy agents (Boulware, Fixed Price) vs communication-focused agents (Charming, Rude)
+- **Flexibility vs Rigidity**: Comparing adaptive (Boulware) vs constant (Fixed Price) vs communication-based strategies
+- **Threshold Sensitivity**: How different threshold values affect negotiation success across agent types
 - **Efficiency Studies**: Which agent combinations achieve better Pareto outcomes
-- **Competitive Dynamics**: Aggressive vs cooperative strategy interactions
-- **Parameter Sensitivity**: How Boulware threshold tuning affects performance
+- **Competitive Dynamics**: Aggressive vs cooperative vs charming strategy interactions
+- **Psychological Tactics**: How positive (charming) vs negative (rude) communication affects outcomes
+- **Resistance to Pressure**: How different agent types respond to aggressive negotiation tactics
+- **Parameter Sensitivity**: How Boulware threshold tuning affects performance against different opponents
 
 ## 🚀 Extending the Framework
 

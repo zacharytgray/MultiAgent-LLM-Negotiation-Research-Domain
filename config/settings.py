@@ -15,6 +15,9 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 
 # Agent configuration
 SYSTEM_INSTRUCTIONS_FILE = "config/system_instructions.txt"
+DETERMINISTIC_AGENT_INSTRUCTIONS_FILE = "config/deterministic_agent_instructions.txt"
+CHARMING_AGENT_INSTRUCTIONS_FILE = "config/charming_agent_instructions.txt"
+RUDE_AGENT_INSTRUCTIONS_FILE = "config/rude_agent_instructions.txt"
 USE_TOOLS_BY_DEFAULT = False
 
 # =============================================================================

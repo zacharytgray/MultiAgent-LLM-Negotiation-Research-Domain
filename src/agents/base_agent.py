@@ -79,36 +79,40 @@ class BaseAgent(ABC):
         """
         pass
     
-    def should_make_deterministic_proposal(self) -> bool:
+    def should_make_deterministic_proposal(self, turn_number: int = 1) -> bool:
         """
         Check if this agent should make a deterministic proposal.
         Override in deterministic agent types (like Boulware).
+        
+        Args:
+            turn_number: Current turn number
         
         Returns:
             bool: True if agent should make deterministic proposal
         """
         return False
     
-    def get_deterministic_proposal(self, current_proposal: Optional[ParsedProposal] = None) -> Optional[Dict]:
+    def get_deterministic_proposal(self, turn_number: int = 1) -> Optional[Dict]:
         """
         Get the deterministic proposal for this agent.
         Override in deterministic agent types.
         
         Args:
-            current_proposal: Current proposal on the table (if any)
+            turn_number: Current turn number
             
         Returns:
             Optional[Dict]: Deterministic allocation dict, or None if not applicable
         """
         return None
     
-    def should_accept_proposal(self, proposal: ParsedProposal) -> bool:
+    def should_accept_proposal(self, proposal: ParsedProposal, turn_number: int = 1) -> bool:
         """
         Check if this agent should accept the given proposal.
         Override in deterministic agent types for custom acceptance logic.
         
         Args:
             proposal: The proposal to evaluate
+            turn_number: Current turn number
             
         Returns:
             bool: True if agent should accept

@@ -70,7 +70,11 @@ class NegotiationSession:
             str: Path to system instructions file
         """
         if agent_type in ["boulware"]:  # Deterministic agents
-            return "config/deterministic_agent_instructions.txt"
+            return DETERMINISTIC_AGENT_INSTRUCTIONS_FILE
+        elif agent_type == "charming":
+            return CHARMING_AGENT_INSTRUCTIONS_FILE
+        elif agent_type == "rude":
+            return RUDE_AGENT_INSTRUCTIONS_FILE
         else:
             return SYSTEM_INSTRUCTIONS_FILE
         
@@ -217,7 +221,7 @@ When you reach an agreement, end your message with "AGREE".
         Returns (agent_response, turn_successful).
         """
         # Check if this agent should make a deterministic proposal
-        if current_agent.should_make_deterministic_proposal():
+        if current_agent.should_make_deterministic_proposal(turn_count):
             return await self._process_deterministic_agent_turn(
                 current_agent, current_agent_num, current_color, turn_count, 
                 round_obj, available_items, max_retries
@@ -291,7 +295,7 @@ When you reach an agreement, end your message with "AGREE".
         current_proposal = self.allocation_tracker.get_current_proposal(round_obj.round_number)
         
         # Check if agent should accept current proposal
-        if current_proposal and current_agent.should_accept_proposal(current_proposal):
+        if current_proposal and current_agent.should_accept_proposal(current_proposal, turn_count):
             print(f"{current_color}Agent {current_agent_num}'s turn (Turn {turn_count}) - Should Accept:{Fore.RESET}")
             
             # Instruct agent to accept
@@ -317,7 +321,7 @@ When you reach an agreement, end your message with "AGREE".
             return response, True
         
         # Agent should make a deterministic proposal
-        intended_proposal = current_agent.get_deterministic_proposal(current_proposal)
+        intended_proposal = current_agent.get_deterministic_proposal(turn_count)
         
         if not intended_proposal:
             print(f"{Fore.RED}❌ Agent {current_agent_num} could not generate deterministic proposal{Fore.RESET}")
@@ -425,8 +429,8 @@ Present this proposal naturally as if you determined it through your own strateg
         """
         if success and round_obj.final_allocation:
             try:
-                # Extract Boulware parameters if any agent is a Boulware agent
-                boulware_params = self._extract_boulware_parameters()
+                # Extract agent parameters if any agent is deterministic
+                agent_params = self._extract_agent_parameters()
                 
                 log_entry = self.csv_logger.create_log_entry(
                     round_obj=round_obj,
@@ -436,7 +440,7 @@ Present this proposal naturally as if you determined it through your own strateg
                     total_rounds=self.num_rounds,
                     agent1_type=self.agent1_type,
                     agent2_type=self.agent2_type,
-                    **boulware_params
+                    **agent_params
                 )
                 self.csv_logger.log_round(log_entry)
                 print(f"{Fore.GREEN}📊 Round {round_obj.round_number} logged to CSV (Duration: {round_duration:.2f}s, Turns: {len(round_obj.conversation_history)}){Fore.RESET}")
@@ -447,33 +451,39 @@ Present this proposal naturally as if you determined it through your own strateg
         
         print(f"\n{Fore.CYAN}--End Round {round_obj.round_number}--{Fore.RESET}\n")
 
-    def _extract_boulware_parameters(self) -> dict:
+    def _extract_agent_parameters(self) -> dict:
         """
-        Extract Boulware agent parameters for logging.
-        Returns a dict with Boulware parameters if any agent is a Boulware agent.
+        Extract agent parameters for logging from all agent types.
+        Returns a dict with all agent parameters for logging.
         """
         # Import here to avoid circular import
         from src.agents.boulware_agent import BoulwareAgent
+        from src.agents.fixed_price_agent import FixedPriceAgent
         
         # Initialize all parameters as None
-        boulware_params = {
+        agent_params = {
             'boulware_initial_threshold': None,
             'boulware_decrease_rate': None,
             'boulware_min_threshold': None,
-            'boulware_final_threshold': None
+            'boulware_final_threshold': None,
+            'fixed_price_threshold': None
         }
         
-        # Check both agents for Boulware parameters
+        # Check both agents for parameters
         for agent in [self.agent1, self.agent2]:
             if isinstance(agent, BoulwareAgent):
-                # Get the parameters from the first Boulware agent found
-                boulware_params['boulware_initial_threshold'] = agent.initial_threshold
-                boulware_params['boulware_decrease_rate'] = agent.decrease_rate
-                boulware_params['boulware_min_threshold'] = agent.min_threshold
-                boulware_params['boulware_final_threshold'] = agent.current_threshold
+                # Get Boulware parameters from the first Boulware agent found
+                agent_params['boulware_initial_threshold'] = agent.initial_threshold
+                agent_params['boulware_decrease_rate'] = agent.decrease_rate
+                agent_params['boulware_min_threshold'] = agent.min_threshold
+                agent_params['boulware_final_threshold'] = agent.current_threshold
                 break  # Use parameters from first Boulware agent found
+            elif isinstance(agent, FixedPriceAgent):
+                # Get Fixed Price parameters from the first Fixed Price agent found
+                agent_params['fixed_price_threshold'] = agent.fixed_threshold
+                break  # Use parameters from first Fixed Price agent found
                 
-        return boulware_params
+        return agent_params
     
     async def run_round(self, round_number: int) -> Round:
         """
@@ -626,15 +636,56 @@ async def main():
     # await session1.run_negotiation()
     
     # Example 2: Default vs Boulware
-    print(f"\n{Fore.YELLOW}=== Example 2: Default vs Boulware ==={Fore.RESET}")
-    session2 = NegotiationSession(
-        num_rounds=3, 
+    # print(f"\n{Fore.YELLOW}=== Example 2: Default vs Boulware ==={Fore.RESET}")
+    # session2 = NegotiationSession(
+    #     num_rounds=3, 
+    #     items_per_round=4,
+    #     agent1_type="default",
+    #     agent2_type="boulware",
+    #     agent2_config={"initial_threshold": 0.80}
+    # )
+    # await session2.run_negotiation()
+    
+    # Example 3: Default vs Fixed Price
+    # print(f"\n{Fore.YELLOW}=== Example 3: Default vs Fixed Price ==={Fore.RESET}")
+    # session3 = NegotiationSession(
+    #     num_rounds=3, 
+    #     items_per_round=4,
+    #     agent1_type="default",
+    #     agent2_type="fixed_price",
+    #     agent2_config={"fixed_threshold": 0.75}
+    # )
+    # await session3.run_negotiation()
+    
+    # Example 4: Default vs Charming
+    # print(f"\n{Fore.YELLOW}=== Example 4: Default vs Charming ==={Fore.RESET}")
+    # session4 = NegotiationSession(
+    #     num_rounds=2, 
+    #     items_per_round=4,
+    #     agent1_type="default",
+    #     agent2_type="charming"
+    # )
+    # await session4.run_negotiation()
+    
+    # Example 5: Default vs Rude
+    print(f"\n{Fore.YELLOW}=== Example 5: Default vs Rude ==={Fore.RESET}")
+    session5 = NegotiationSession(
+        num_rounds=2, 
         items_per_round=4,
         agent1_type="default",
-        agent2_type="boulware",
-        agent2_config={"initial_threshold": 0.80}
+        agent2_type="rude"
     )
-    await session2.run_negotiation()
+    await session5.run_negotiation()
+    
+    # Example 6: Charming vs Rude
+    print(f"\n{Fore.YELLOW}=== Example 6: Charming vs Rude ==={Fore.RESET}")
+    session6 = NegotiationSession(
+        num_rounds=2, 
+        items_per_round=4,
+        agent1_type="charming",
+        agent2_type="rude"
+    )
+    await session6.run_negotiation()
 
 
 async def run_specific_matchup(agent1_type: str, agent2_type: str, num_rounds: int = 3,

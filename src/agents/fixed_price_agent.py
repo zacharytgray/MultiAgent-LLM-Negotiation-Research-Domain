@@ -1,6 +1,6 @@
 """
-Boulware agent implementation with deterministic strategy.
-Uses the Boulware negotiation strategy with decreasing thresholds over time.
+Fixed Price agent implementation with constant threshold strategy.
+Uses a fixed threshold that never changes throughout the negotiation.
 """
 
 import itertools
@@ -9,37 +9,29 @@ from src.core.Item import Item
 from src.agents.base_agent import BaseAgent
 from src.agents.ollamaAgentModule import Agent as OllamaAgent
 from src.utils.MessageParser import ParsedProposal
-from config.settings import BOULWARE_INITIAL_THRESHOLD, BOULWARE_DECREASE_RATE, BOULWARE_MIN_THRESHOLD
+from config.settings import BOULWARE_INITIAL_THRESHOLD
 
 
-class BoulwareAgent(BaseAgent):
+class FixedPriceAgent(BaseAgent):
     """
-    Boulware agent that uses a deterministic strategy with decreasing thresholds.
+    Fixed Price agent that uses a constant threshold strategy.
     The LLM is used as a wrapper to present the deterministic proposals naturally.
     """
     
     def __init__(self, agent_id: int, model_name: str, system_instructions_file: str, 
-                 initial_threshold: Optional[float] = None, 
-                 decrease_rate: Optional[float] = None,
-                 min_threshold: Optional[float] = None,
-                 use_tools: bool = False):
+                 fixed_threshold: Optional[float] = None, use_tools: bool = False):
         """
-        Initialize the Boulware agent.
+        Initialize the Fixed Price agent.
         
         Args:
             agent_id: Unique identifier for this agent (1 or 2)
             model_name: Name of the LLM model to use
             system_instructions_file: Path to system instructions file
-            initial_threshold: Starting threshold percentage (defaults to settings.BOULWARE_INITIAL_THRESHOLD)
-            decrease_rate: Amount to decrease threshold per turn (defaults to settings.BOULWARE_DECREASE_RATE)
-            min_threshold: Minimum threshold value (defaults to settings.BOULWARE_MIN_THRESHOLD)
+            fixed_threshold: Fixed threshold percentage (defaults to settings.BOULWARE_INITIAL_THRESHOLD)
             use_tools: Whether to enable tool usage
         """
         super().__init__(agent_id, model_name, system_instructions_file)
-        self.initial_threshold = initial_threshold if initial_threshold is not None else BOULWARE_INITIAL_THRESHOLD
-        self.decrease_rate = decrease_rate if decrease_rate is not None else BOULWARE_DECREASE_RATE
-        self.min_threshold = min_threshold if min_threshold is not None else BOULWARE_MIN_THRESHOLD
-        self.current_threshold = self.initial_threshold
+        self.fixed_threshold = fixed_threshold if fixed_threshold is not None else BOULWARE_INITIAL_THRESHOLD
         self.use_tools = use_tools
         self.ranked_allocations = []
         self.all_possible_allocations = []
@@ -56,8 +48,11 @@ class BoulwareAgent(BaseAgent):
             allocation: Dictionary with agent1 and agent2 item lists
             
         Returns:
-            float: Total welfare value for this agent
+            float: Total welfare for this agent
         """
+        if not self.current_items:
+            return 0.0
+            
         agent_key = f"agent{self.agent_id}"
         agent_items = allocation.get(agent_key, [])
         
@@ -74,18 +69,16 @@ class BoulwareAgent(BaseAgent):
         Generate all possible allocations of items between the two agents.
         
         Returns:
-            List[Dict]: All possible allocations
+            List of allocation dictionaries
         """
         if not self.current_items:
             return []
         
         item_names = [item.name for item in self.current_items]
-        num_items = len(item_names)
         all_allocations = []
         
-        # Generate all possible combinations of items for agent1
-        # Agent2 gets the remaining items
-        for r in range(num_items + 1):
+        # Generate all possible subsets for agent1
+        for r in range(len(item_names) + 1):
             for agent1_items in itertools.combinations(item_names, r):
                 agent1_list = list(agent1_items)
                 agent2_list = [item for item in item_names if item not in agent1_list]
@@ -100,10 +93,10 @@ class BoulwareAgent(BaseAgent):
     
     def _rank_allocations_by_welfare(self) -> List[Dict[str, List[str]]]:
         """
-        Rank all possible allocations from lowest to highest welfare for this agent.
+        Rank all possible allocations by this agent's welfare.
         
         Returns:
-            List[Dict]: Sorted allocations (lowest welfare first, highest welfare last)
+            List of allocations sorted by welfare (lowest to highest)
         """
         all_allocations = self._generate_all_possible_allocations()
         
@@ -113,15 +106,16 @@ class BoulwareAgent(BaseAgent):
             welfare = self._calculate_agent_welfare(allocation)
             allocation_welfare_pairs.append((allocation, welfare))
         
-        # Sort by welfare (lowest first)
+        # Sort by welfare (lowest to highest)
         allocation_welfare_pairs.sort(key=lambda x: x[1])
         
-        # Return just the allocations
-        return [pair[0] for pair in allocation_welfare_pairs]
+        # Return just the allocations in sorted order
+        return [allocation for allocation, welfare in allocation_welfare_pairs]
     
-    def _get_boulware_proposal_index(self) -> int:
+    def _get_fixed_price_proposal_index(self) -> int:
         """
-        Get the index in ranked_allocations based on current threshold.
+        Get the index in ranked_allocations based on fixed threshold.
+        Unlike Boulware, this threshold never changes.
         
         Returns:
             int: Index of the proposal to make
@@ -129,25 +123,15 @@ class BoulwareAgent(BaseAgent):
         if not self.ranked_allocations:
             return 0
         
-        # Calculate index based on threshold
+        max_index = len(self.ranked_allocations) - 1
+        
+        # Calculate index based on fixed threshold
         # threshold of 1.0 = best allocation (last index)
         # threshold of 0.0 = worst allocation (first index)
-        max_index = len(self.ranked_allocations) - 1
-        index = int(max_index * self.current_threshold)
+        index = int(self.fixed_threshold * max_index)
         
         # Ensure index is within bounds
         return min(max(index, 0), max_index)
-    
-    def _decrease_threshold(self, turn_number: int):
-        """
-        Decrease threshold according to Boulware schedule.
-        
-        Args:
-            turn_number: Current turn number
-        """
-        # Linear decrease using configurable rate
-        self.current_threshold = max(self.min_threshold, 
-                                   self.initial_threshold - (turn_number * self.decrease_rate))
     
     async def generate_response(self) -> str:
         """
@@ -174,7 +158,6 @@ class BoulwareAgent(BaseAgent):
         Reset the agent's memory to initial state and reset strategy.
         """
         self.ollama_agent.reset_memory()
-        self.current_threshold = self.initial_threshold
         self.ranked_allocations = []
         self.all_possible_allocations = []
         self.intended_proposal = None
@@ -210,123 +193,113 @@ class BoulwareAgent(BaseAgent):
         
         return ", ".join(items_str)
     
-    def should_make_deterministic_proposal(self, turn_number: int = 1) -> bool:
+    def should_make_deterministic_proposal(self, turn_number: int) -> bool:
         """
-        Boulware agents always make deterministic proposals.
+        Fixed Price agents always make deterministic proposals.
         
         Args:
-            turn_number: Current turn number (not used, but required for interface)
-        
+            turn_number: Current turn number
+            
         Returns:
-            bool: Always True for Boulware agents
+            bool: Always True for Fixed Price agents
         """
         return True
     
-    def get_deterministic_proposal(self, turn_number: int = 1) -> Optional[Dict]:
+    def get_deterministic_proposal(self, turn_number: int) -> Optional[Dict[str, List[str]]]:
         """
-        Get the deterministic proposal based on Boulware strategy.
+        Get the deterministic proposal for the Fixed Price agent.
+        Always uses the same fixed threshold-based allocation.
         
         Args:
-            turn_number: Current turn number in the negotiation
+            turn_number: Current turn number (ignored for Fixed Price)
             
         Returns:
-            Optional[Dict]: Deterministic allocation dict
+            Dict: The proposed allocation
         """
         if not self.ranked_allocations:
             return None
         
-        # Always use threshold-based proposal (whether initial or counter-proposal)
-        proposal_index = self._get_boulware_proposal_index()
-        self.intended_proposal = self.ranked_allocations[proposal_index]
+        # Get proposal index based on fixed threshold
+        proposal_index = self._get_fixed_price_proposal_index()
+        
+        # Store intended proposal for validation
+        self.intended_proposal = self.ranked_allocations[proposal_index].copy()
         
         return self.intended_proposal
     
     def should_accept_proposal(self, proposal: ParsedProposal, turn_number: int) -> bool:
         """
-        Check if the Boulware agent should accept the given proposal.
-        Accept if the proposal gives us welfare >= current threshold.
+        Determine if the Fixed Price agent should accept a proposal.
+        Accepts if the proposal gives welfare at or above the fixed threshold.
         
         Args:
             proposal: The proposal to evaluate
-            turn_number: Current turn number
+            turn_number: Current turn number (ignored for Fixed Price)
             
         Returns:
-            bool: True if agent should accept
+            bool: True if proposal should be accepted
         """
-        if not proposal or not proposal.allocation:
+        if not proposal or not proposal.is_valid:
             return False
         
-        # Update threshold based on turn number
-        self._decrease_threshold(turn_number)
+        # Convert proposal to allocation format
+        allocation = {
+            "agent1": proposal.agent1_items,
+            "agent2": proposal.agent2_items
+        }
         
-        proposal_welfare = self._calculate_agent_welfare(proposal.allocation)
+        # Calculate welfare for this proposal
+        proposal_welfare = self._calculate_agent_welfare(allocation)
         
-        # Find the welfare that corresponds to our current threshold
+        # Get the welfare at our fixed threshold level
         if not self.ranked_allocations:
             return False
         
-        threshold_index = self._get_boulware_proposal_index()
-        threshold_welfare = self._calculate_agent_welfare(self.ranked_allocations[threshold_index])
+        threshold_index = self._get_fixed_price_proposal_index()
+        threshold_allocation = self.ranked_allocations[threshold_index]
+        threshold_welfare = self._calculate_agent_welfare(threshold_allocation)
         
+        # Accept if proposal welfare is at or above our fixed threshold welfare
         return proposal_welfare >= threshold_welfare
     
-    def validate_output_matches_intent(self, response: str, intended_proposal: Optional[Dict]) -> bool:
+    def validate_output_matches_intent(self, llm_output: str, intended_proposal: Dict[str, List[str]]) -> bool:
         """
-        Validate that the agent's output contains the intended deterministic proposal.
+        Validate that the LLM output matches the intended deterministic proposal.
         
         Args:
-            response: The agent's response
-            intended_proposal: The intended deterministic proposal
+            llm_output: The LLM's actual output
+            intended_proposal: The proposal we intended to make
             
         Returns:
-            bool: True if output matches intent
+            bool: True if the output matches the intent
         """
-        if not intended_proposal:
-            return True  # No specific intent to validate
-        
-        # Use MessageParser to extract proposal from response
         from src.utils.MessageParser import MessageParser
+        
         parser = MessageParser()
-        item_names = [item.name for item in self.current_items]
+        parsed = parser.extract_proposal(llm_output, [item.name for item in self.current_items])
         
-        extracted_proposal = parser.extract_proposal(response, item_names)
-        
-        if not extracted_proposal or not extracted_proposal.allocation:
+        if not parsed or not parsed.is_valid:
             return False
         
-        # Check if extracted allocation matches intended allocation
-        extracted_allocation = extracted_proposal.allocation
+        # Check if parsed proposal matches intended proposal
+        def normalize_list(items):
+            return sorted(items) if items else []
         
-        # Compare agent allocations
-        for agent_key in ["agent1", "agent2"]:
-            intended_items = set(intended_proposal.get(agent_key, []))
-            extracted_items = set(extracted_allocation.get(agent_key, []))
-            
-            if intended_items != extracted_items:
-                return False
-        
-        return True
+        return (normalize_list(parsed.agent1_items) == normalize_list(intended_proposal.get("agent1", [])) and
+                normalize_list(parsed.agent2_items) == normalize_list(intended_proposal.get("agent2", [])))
     
-    def update_strategy_state(self, turn_number: int):
-        """
-        Update the Boulware agent's threshold based on turn number.
-        
-        Args:
-            turn_number: Current turn number in the negotiation
-        """
-        self._decrease_threshold(turn_number)
-    
-    def get_strategy_info(self) -> Dict:
+    def get_strategy_info(self) -> str:
         """
         Get information about the current strategy state.
         
         Returns:
-            Dict: Strategy information for debugging/logging
+            str: Strategy information for debugging
         """
-        return {
-            "agent_type": "boulware",
-            "current_threshold": self.current_threshold,
-            "initial_threshold": self.initial_threshold,
-            "num_allocations": len(self.ranked_allocations),
-            "intended_proposal": self.intended_proposal
-        }
+        if not self.ranked_allocations:
+            return "Fixed Price Agent (no allocations calculated yet)"
+        
+        proposal_index = self._get_fixed_price_proposal_index()
+        proposal = self.ranked_allocations[proposal_index]
+        proposal_welfare = self._calculate_agent_welfare(proposal)
+        
+        return f"Fixed Price Agent (threshold: {self.fixed_threshold:.2f}, target welfare: {proposal_welfare:.2f})"

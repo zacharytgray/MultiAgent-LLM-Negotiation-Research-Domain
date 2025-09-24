@@ -7,6 +7,9 @@ from typing import Dict, Any, Type, Optional
 from src.agents.base_agent import BaseAgent
 from src.agents.default_agent import DefaultAgent
 from src.agents.boulware_agent import BoulwareAgent
+from src.agents.fixed_price_agent import FixedPriceAgent
+from src.agents.charming_agent import CharmingAgent
+from src.agents.rude_agent import RudeAgent
 from config.settings import BOULWARE_INITIAL_THRESHOLD, BOULWARE_DECREASE_RATE, BOULWARE_MIN_THRESHOLD
 
 
@@ -19,6 +22,9 @@ class AgentFactory:
     AGENT_TYPES: Dict[str, Type[BaseAgent]] = {
         "default": DefaultAgent,
         "boulware": BoulwareAgent,
+        "fixed_price": FixedPriceAgent,
+        "charming": CharmingAgent,
+        "rude": RudeAgent,
     }
     
     @classmethod
@@ -134,6 +140,54 @@ class AgentConfig:
         }
     
     @staticmethod
+    def fixed_price_config(fixed_threshold: Optional[float] = None,
+                          use_tools: bool = False) -> Dict[str, Any]:
+        """
+        Get configuration for Fixed Price agents.
+        
+        Args:
+            fixed_threshold: Fixed threshold percentage (defaults to Boulware initial threshold)
+            use_tools: Whether to enable tool usage
+            
+        Returns:
+            Dict: Configuration parameters
+        """
+        return {
+            "fixed_threshold": fixed_threshold if fixed_threshold is not None else BOULWARE_INITIAL_THRESHOLD,
+            "use_tools": use_tools
+        }
+    
+    @staticmethod
+    def charming_config(use_tools: bool = False) -> Dict[str, Any]:
+        """
+        Get configuration for Charming agents.
+        
+        Args:
+            use_tools: Whether to enable tool usage
+            
+        Returns:
+            Dict: Configuration parameters
+        """
+        return {
+            "use_tools": use_tools
+        }
+    
+    @staticmethod
+    def rude_config(use_tools: bool = False) -> Dict[str, Any]:
+        """
+        Get configuration for Rude agents.
+        
+        Args:
+            use_tools: Whether to enable tool usage
+            
+        Returns:
+            Dict: Configuration parameters
+        """
+        return {
+            "use_tools": use_tools
+        }
+    
+    @staticmethod
     def get_config_for_type(agent_type: str, **kwargs) -> Dict[str, Any]:
         """
         Get appropriate configuration for the given agent type.
@@ -149,6 +203,12 @@ class AgentConfig:
             config = AgentConfig.default_config()
         elif agent_type == "boulware":
             config = AgentConfig.boulware_config()
+        elif agent_type == "fixed_price":
+            config = AgentConfig.fixed_price_config()
+        elif agent_type == "charming":
+            config = AgentConfig.charming_config()
+        elif agent_type == "rude":
+            config = AgentConfig.rude_config()
         else:
             config = {}
         
