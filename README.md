@@ -421,6 +421,7 @@ session5 = NegotiationSession(
 
 | Agent 1 Type | Agent 2 Type | Research Question |
 |--------------|--------------|-------------------|
+| `default` | `default` | Baseline natural negotiation between standard agents |
 | `default` | `charming` | How does charm affect standard negotiation? |
 | `default` | `rude` | How does aggression impact normal negotiations? |
 | `charming` | `rude` | Polar opposite communication styles |
