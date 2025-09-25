@@ -8,7 +8,7 @@ Centralizes all configurable parameters and constants.
 # =============================================================================
 
 # Default model settings
-DEFAULT_MODEL_NAME = "granite3-dense:8b"
+DEFAULT_MODEL_NAME = "gpt-oss:20b"
 MODEL_TEMPERATURE = 0.5
 RESPONSE_TIMEOUT = 60
 OLLAMA_BASE_URL = "http://localhost:11434"

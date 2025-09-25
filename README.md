@@ -432,15 +432,38 @@ session5 = NegotiationSession(
 
 ## 📄 Example Usage
 
+### Command Line Interface
+
 ```bash
 # Run a standard negotiation (default vs default agents)
-python Negotiation.py  
+python Negotiation.py
 
-# Run mixed agent negotiations by modifying Negotiation.py:
-# - Change agent1_type = "default" and agent2_type = "boulware" 
-# - Change agent1_type = "fixed_price" and agent2_type = "boulware"
-# - Or create custom agent configurations in code
+# Run specific agent combinations
+python Negotiation.py --agent1 default --agent2 charming
+python Negotiation.py --agent1 charming --agent2 rude
+python Negotiation.py --agent1 boulware --agent2 fixed_price
 
+# Customize negotiation parameters
+python Negotiation.py --agent1 default --agent2 boulware --rounds 5 --items 6
+python Negotiation.py --agent1 charming --agent2 rude --rounds 2 --items 3 --model "gpt-oss:20b"
+
+# View all available options
+python Negotiation.py --help
+```
+
+### Available Command Line Arguments
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--agent1` | str | `default` | Type of agent 1 (default, boulware, fixed_price, charming, rude) |
+| `--agent2` | str | `default` | Type of agent 2 (default, boulware, fixed_price, charming, rude) |
+| `--rounds` | int | `3` | Number of negotiation rounds |
+| `--items` | int | `4` | Number of items per round |
+| `--model` | str | `gpt-oss:20b` | Model name to use for agents |
+
+### Analysis
+
+```bash
 # Analyze the results with all metrics
 python analyze_results.py logs/log_file_path.csv
 
