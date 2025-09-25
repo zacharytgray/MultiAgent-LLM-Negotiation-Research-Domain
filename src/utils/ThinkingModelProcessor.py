@@ -36,37 +36,3 @@ def has_thinking_blocks(response: str) -> bool:
         bool: True if response contains <think> blocks
     """
     return bool(re.search(r'<think>.*?</think>', response, flags=re.DOTALL | re.IGNORECASE))
-
-
-def has_malformed_thinking_blocks(response: str) -> bool:
-    """
-    Check if a response contains malformed thinking blocks (unclosed <think> tags).
-    
-    Args:
-        response: Response to check
-        
-    Returns:
-        bool: True if response has unclosed <think> tags
-    """
-    # Check for <think> without matching </think>
-    think_opens = len(re.findall(r'<think>', response, flags=re.IGNORECASE))
-    think_closes = len(re.findall(r'</think>', response, flags=re.IGNORECASE))
-    
-    return think_opens > think_closes
-
-
-def is_response_too_short_after_thinking_removal(response: str, min_length: int = 10) -> bool:
-    """
-    Check if response becomes too short after removing thinking blocks.
-    
-    Args:
-        response: Response to check
-        min_length: Minimum acceptable length for actual content
-        
-    Returns:
-        bool: True if response is too short after thinking block removal
-    """
-    if has_thinking_blocks(response):
-        cleaned = strip_thinking_blocks(response)
-        return len(cleaned.strip()) < min_length
-    return False
