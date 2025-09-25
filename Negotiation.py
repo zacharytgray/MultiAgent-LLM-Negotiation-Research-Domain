@@ -172,6 +172,7 @@ When you reach an agreement, end your message with "AGREE".
         turn_count = 0
         current_agent_num = round_obj.starting_agent
         max_retries_per_turn = MAX_RETRIES_PER_INVALID_PROPOSAL  # Maximum retries for invalid proposals
+        pressure_message_sent = {1: False, 2: False}  # Track which agents have received pressure message
         
         while turn_count < max_turns and not round_obj.is_complete:
             turn_count += 1
@@ -187,6 +188,32 @@ When you reach an agreement, end your message with "AGREE".
                 other_agent = self.agent1
                 current_color = Fore.BLUE
                 other_agent_num = 1
+            
+            # Add time pressure message for non-deterministic agents when 5 turns remain
+            turns_remaining = max_turns - turn_count
+            if turns_remaining <= 5:
+                pressure_message = (
+                    f"⚠️  TIME PRESSURE ALERT: You have only {turns_remaining} turns remaining to reach an agreement! "
+                    "There is a strict time limit in this negotiation. If you do not come to an agreement soon, "
+                    "you will receive a fallback reward that is significantly worse than any outcome you would "
+                    "receive if you make a deal. You must prioritize reaching an agreement quickly to avoid this penalty."
+                )
+                
+                # Add pressure message to current agent if non-deterministic and not already sent
+                if (not current_agent.should_make_deterministic_proposal(turn_count) and 
+                    not pressure_message_sent[current_agent_num]):
+                    print(f"{Fore.YELLOW}📢 Sending time pressure alert to Agent {current_agent_num} ({current_agent.agent_type if hasattr(current_agent, 'agent_type') else 'Unknown'}):{Fore.RESET}")
+                    print(f"{Fore.YELLOW}    {pressure_message}{Fore.RESET}")
+                    current_agent.add_to_memory('system', pressure_message)
+                    pressure_message_sent[current_agent_num] = True
+                
+                # Add pressure message to other agent if non-deterministic and not already sent
+                if (not other_agent.should_make_deterministic_proposal(turn_count) and 
+                    not pressure_message_sent[other_agent_num]):
+                    print(f"{Fore.YELLOW}📢 Sending time pressure alert to Agent {other_agent_num} ({other_agent.agent_type if hasattr(other_agent, 'agent_type') else 'Unknown'}):{Fore.RESET}")
+                    print(f"{Fore.YELLOW}    {pressure_message}{Fore.RESET}")
+                    other_agent.add_to_memory('system', pressure_message)
+                    pressure_message_sent[other_agent_num] = True
             
             # Process agent turn with retry logic for invalid proposals
             response, turn_successful = await self._process_agent_turn_with_retry(
@@ -427,28 +454,48 @@ Present this proposal naturally as if you determined it through your own strateg
     def _log_round_completion(self, round_obj: Round, round_duration: float, success: bool):
         """
         Log the round completion to CSV and display status.
+        Always logs rounds, even when consensus wasn't reached.
         """
-        if success and round_obj.final_allocation:
-            try:
-                # Extract agent parameters if any agent is deterministic
-                agent_params = self._extract_agent_parameters()
+        try:
+            # Extract agent parameters if any agent is deterministic
+            agent_params = self._extract_agent_parameters()
+            
+            # Determine final allocation and consensus status
+            if success and round_obj.final_allocation:
+                final_allocation = round_obj.final_allocation
+                reached_consensus = True
+                final_proposer = getattr(round_obj, 'final_proposer', None)
+            else:
+                # No consensus reached - use empty allocation
+                final_allocation = {"agent1": [], "agent2": []}
+                reached_consensus = False
+                final_proposer = None
+                # Set empty final_allocation on round_obj if it doesn't exist
+                if not hasattr(round_obj, 'final_allocation') or not round_obj.final_allocation:
+                    round_obj.final_allocation = final_allocation
+                if not hasattr(round_obj, 'final_proposer'):
+                    round_obj.final_proposer = final_proposer
+            
+            log_entry = self.csv_logger.create_log_entry(
+                round_obj=round_obj,
+                round_duration=round_duration,
+                final_allocation=final_allocation,
+                allocation_tracker=self.allocation_tracker,
+                total_rounds=self.num_rounds,
+                agent1_type=self.agent1_type,
+                agent2_type=self.agent2_type,
+                reached_consensus=reached_consensus,
+                **agent_params
+            )
+            self.csv_logger.log_round(log_entry)
+            
+            if reached_consensus:
+                print(f"{Fore.GREEN}📊 Round {round_obj.round_number} logged to CSV (Consensus: YES, Duration: {round_duration:.2f}s, Turns: {len(round_obj.conversation_history)}){Fore.RESET}")
+            else:
+                print(f"{Fore.YELLOW}📊 Round {round_obj.round_number} logged to CSV (Consensus: NO - Turn limit reached, Duration: {round_duration:.2f}s, Turns: {len(round_obj.conversation_history)}){Fore.RESET}")
                 
-                log_entry = self.csv_logger.create_log_entry(
-                    round_obj=round_obj,
-                    round_duration=round_duration,
-                    final_allocation=round_obj.final_allocation,
-                    allocation_tracker=self.allocation_tracker,
-                    total_rounds=self.num_rounds,
-                    agent1_type=self.agent1_type,
-                    agent2_type=self.agent2_type,
-                    **agent_params
-                )
-                self.csv_logger.log_round(log_entry)
-                print(f"{Fore.GREEN}📊 Round {round_obj.round_number} logged to CSV (Duration: {round_duration:.2f}s, Turns: {len(round_obj.conversation_history)}){Fore.RESET}")
-            except Exception as e:
-                print(f"{Fore.RED}❌ Failed to log round {round_obj.round_number}: {e}{Fore.RESET}")
-        else:
-            print(f"{Fore.YELLOW}⚠️  Round {round_obj.round_number} not logged (incomplete or no allocation){Fore.RESET}")
+        except Exception as e:
+            print(f"{Fore.RED}❌ Failed to log round {round_obj.round_number}: {e}{Fore.RESET}")
         
         print(f"\n{Fore.CYAN}--End Round {round_obj.round_number}--{Fore.RESET}\n")
 

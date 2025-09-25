@@ -160,6 +160,7 @@ class NegotiationAnalyzer:
             'starting_agent': row['starting_agent'],
             'round_completed': row['round_completed'],
             'agreement_reached': row['agreement_reached'],
+            'reached_consensus': row.get('reached_consensus', row['agreement_reached']),  # Fallback for older logs
             'timestamp': row['timestamp'],
             'date': row['date']
         }

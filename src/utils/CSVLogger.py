@@ -48,6 +48,7 @@ class RawNegotiationLogEntry:
     starting_agent: int
     round_completed: bool
     agreement_reached: bool
+    reached_consensus: bool
     
     # Raw item data (JSON strings for complex data)
     items_data: str  # JSON: [{"name": "ItemA", "agent1_value": 0.8, "agent2_value": 0.3}, ...]
@@ -102,7 +103,8 @@ class CSVLogger:
                         boulware_decrease_rate: Optional[float] = None,
                         boulware_min_threshold: Optional[float] = None,
                         boulware_final_threshold: Optional[float] = None,
-                        fixed_price_threshold: Optional[float] = None) -> RawNegotiationLogEntry:
+                        fixed_price_threshold: Optional[float] = None,
+                        reached_consensus: bool = True) -> RawNegotiationLogEntry:
         """
         Create a raw log entry for a negotiation round without analysis metrics.
         """
@@ -174,6 +176,7 @@ class CSVLogger:
             starting_agent=round_obj.starting_agent,
             round_completed=round_obj.is_complete,
             agreement_reached=round_obj.is_complete,
+            reached_consensus=reached_consensus,
             
             # Raw data as JSON strings
             items_data=json.dumps(items_data),
