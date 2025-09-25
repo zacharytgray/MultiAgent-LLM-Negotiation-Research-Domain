@@ -197,6 +197,7 @@ When you reach an agreement, end your message with "AGREE".
                     "There is a strict time limit in this negotiation. If you do not come to an agreement soon, "
                     "you will receive a fallback reward that is significantly worse than any outcome you would "
                     "receive if you make a deal. You must prioritize reaching an agreement quickly to avoid this penalty."
+                    "Make item sacrifices as necessary to avoid this penalty."
                 )
                 
                 # Add pressure message to current agent if non-deterministic and not already sent
@@ -204,7 +205,7 @@ When you reach an agreement, end your message with "AGREE".
                     not pressure_message_sent[current_agent_num]):
                     print(f"{Fore.YELLOW}📢 Sending time pressure alert to Agent {current_agent_num} ({current_agent.agent_type if hasattr(current_agent, 'agent_type') else 'Unknown'}):{Fore.RESET}")
                     print(f"{Fore.YELLOW}    {pressure_message}{Fore.RESET}")
-                    current_agent.add_to_memory('system', pressure_message)
+                    current_agent.add_to_memory('user', pressure_message)
                     pressure_message_sent[current_agent_num] = True
                 
                 # Add pressure message to other agent if non-deterministic and not already sent
@@ -212,7 +213,7 @@ When you reach an agreement, end your message with "AGREE".
                     not pressure_message_sent[other_agent_num]):
                     print(f"{Fore.YELLOW}📢 Sending time pressure alert to Agent {other_agent_num} ({other_agent.agent_type if hasattr(other_agent, 'agent_type') else 'Unknown'}):{Fore.RESET}")
                     print(f"{Fore.YELLOW}    {pressure_message}{Fore.RESET}")
-                    other_agent.add_to_memory('system', pressure_message)
+                    other_agent.add_to_memory('user', pressure_message)
                     pressure_message_sent[other_agent_num] = True
             
             # Process agent turn with retry logic for invalid proposals
