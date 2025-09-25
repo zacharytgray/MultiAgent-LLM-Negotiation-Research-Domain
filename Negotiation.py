@@ -1,6 +1,7 @@
 import asyncio
 import random
 import time
+import argparse
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from src.agents.base_agent import BaseAgent
@@ -20,7 +21,7 @@ class NegotiationSession:
     """
     Main class that manages the entire negotiation session across multiple rounds.
     """
-    def __init__(self, num_rounds: int, items_per_round: int = DEFAULT_ITEMS_PER_ROUND, 
+    def __init__(self, num_rounds: int = DEFAULT_NUM_ROUNDS, items_per_round: int = DEFAULT_ITEMS_PER_ROUND, 
                  model_name: str = DEFAULT_MODEL_NAME, agent1_type: str = "default", 
                  agent2_type: str = "default", agent1_config: Optional[Dict] = None, 
                  agent2_config: Optional[Dict] = None):
@@ -616,76 +617,85 @@ Present this proposal naturally as if you determined it through your own strateg
         
         self.total_scores = {"agent1": total_agent1_value, "agent2": total_agent2_value}
 
+def parse_arguments():
+    """
+    Parse command line arguments for the negotiation system.
+    """
+    parser = argparse.ArgumentParser(
+        description="Multi-Agent Negotiation System",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Agent configuration
+    available_agents = ["default", "boulware", "fixed_price", "charming", "rude"]
+    parser.add_argument(
+        "--agent1", 
+        type=str, 
+        choices=available_agents,
+        default="default",
+        help="Type of agent 1"
+    )
+    parser.add_argument(
+        "--agent2", 
+        type=str, 
+        choices=available_agents,
+        default="default", 
+        help="Type of agent 2"
+    )
+    
+    # Negotiation parameters
+    parser.add_argument(
+        "--rounds", 
+        type=int, 
+        default=DEFAULT_NUM_ROUNDS,
+        help="Number of negotiation rounds"
+    )
+    parser.add_argument(
+        "--items", 
+        type=int, 
+        default=DEFAULT_ITEMS_PER_ROUND,
+        help="Number of items per round"
+    )
+    
+    # Model configuration
+    parser.add_argument(
+        "--model", 
+        type=str, 
+        default=DEFAULT_MODEL_NAME,
+        help="Model name to use for agents"
+    )
+    
+    return parser.parse_args()
+
 # Main execution
-async def main():
+async def main(agent1_type="default", agent2_type="default", num_rounds=DEFAULT_NUM_ROUNDS, 
+              items_per_round=DEFAULT_ITEMS_PER_ROUND, model_name=DEFAULT_MODEL_NAME):
     """
     Entry point for the negotiation system.
-    Shows examples of different agent combinations.
+    Run a single negotiation session with the specified parameters.
     """
     print(f"{Fore.MAGENTA}🤖 Multi-Agent Negotiation System{Fore.RESET}")
     print(f"{Fore.CYAN}Available agent types: {AgentFactory.get_available_types()}{Fore.RESET}")
     
-    # Example 1: Default vs Default (original behavior)
-    print(f"\n{Fore.YELLOW}=== Example 1: Default vs Default ==={Fore.RESET}")
-    session1 = NegotiationSession(
-        num_rounds=100, 
-        items_per_round=4,
-        agent1_type="default",
-        agent2_type="default"
+    # Display current configuration
+    print(f"\n{Fore.YELLOW}=== Configuration ==={Fore.RESET}")
+    print(f"Agent 1: {agent1_type}")
+    print(f"Agent 2: {agent2_type}") 
+    print(f"Rounds: {num_rounds}")
+    print(f"Items per round: {items_per_round}")
+    print(f"Model: {model_name}")
+    
+    # Run negotiation session
+    print(f"\n{Fore.YELLOW}=== Running Negotiation: {agent1_type} vs {agent2_type} ==={Fore.RESET}")
+    session = NegotiationSession(
+        num_rounds=num_rounds,
+        items_per_round=items_per_round,
+        model_name=model_name,
+        agent1_type=agent1_type,
+        agent2_type=agent2_type
     )
-    await session1.run_negotiation()
-    
-    # Example 2: Default vs Boulware
-    # print(f"\n{Fore.YELLOW}=== Example 2: Default vs Boulware ==={Fore.RESET}")
-    # session2 = NegotiationSession(
-    #     num_rounds=3, 
-    #     items_per_round=4,
-    #     agent1_type="default",
-    #     agent2_type="boulware",
-    #     agent2_config={"initial_threshold": 0.80}
-    # )
-    # await session2.run_negotiation()
-    
-    # Example 3: Default vs Fixed Price
-    # print(f"\n{Fore.YELLOW}=== Example 3: Default vs Fixed Price ==={Fore.RESET}")
-    # session3 = NegotiationSession(
-    #     num_rounds=3, 
-    #     items_per_round=4,
-    #     agent1_type="default",
-    #     agent2_type="fixed_price",
-    #     agent2_config={"fixed_threshold": 0.75}
-    # )
-    # await session3.run_negotiation()
-    
-    # Example 4: Default vs Charming
-    # print(f"\n{Fore.YELLOW}=== Example 4: Default vs Charming ==={Fore.RESET}")
-    # session4 = NegotiationSession(
-    #     num_rounds=2, 
-    #     items_per_round=4,
-    #     agent1_type="default",
-    #     agent2_type="charming"
-    # )
-    # await session4.run_negotiation()
-    
-    # Example 5: Default vs Rude
-    # print(f"\n{Fore.YELLOW}=== Example 5: Default vs Rude ==={Fore.RESET}")
-    # session5 = NegotiationSession(
-    #     num_rounds=2, 
-    #     items_per_round=4,
-    #     agent1_type="default",
-    #     agent2_type="rude"
-    # )
-    # await session5.run_negotiation()
-    
-    # Example 6: Charming vs Rude
-    # print(f"\n{Fore.YELLOW}=== Example 6: Charming vs Rude ==={Fore.RESET}")
-    # session6 = NegotiationSession(
-    #     num_rounds=2, 
-    #     items_per_round=4,
-    #     agent1_type="charming",
-    #     agent2_type="rude"
-    # )
-    # await session6.run_negotiation()
+    await session.run_negotiation()
+    return session
 
 
 async def run_specific_matchup(agent1_type: str, agent2_type: str, num_rounds: int = 3,
@@ -712,4 +722,14 @@ async def run_specific_matchup(agent1_type: str, agent2_type: str, num_rounds: i
     return session
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    # Run negotiation with CLI arguments
+    asyncio.run(main(
+        agent1_type=args.agent1,
+        agent2_type=args.agent2,
+        num_rounds=args.rounds,
+        items_per_round=args.items,
+        model_name=args.model
+    ))

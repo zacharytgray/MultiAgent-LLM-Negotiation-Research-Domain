@@ -8,7 +8,7 @@ Centralizes all configurable parameters and constants.
 # =============================================================================
 
 # Default model settings
-DEFAULT_MODEL_NAME = "gpt-oss:20b"
+DEFAULT_MODEL_NAME = "granite3-dense:8b"
 MODEL_TEMPERATURE = 0.5
 RESPONSE_TIMEOUT = 60
 OLLAMA_BASE_URL = "http://localhost:11434"
@@ -25,7 +25,7 @@ USE_TOOLS_BY_DEFAULT = False
 # =============================================================================
 
 # Round settings
-DEFAULT_NUM_ROUNDS = 3
+DEFAULT_NUM_ROUNDS = 100
 DEFAULT_ITEMS_PER_ROUND = 4
 MAX_TURNS_PER_ROUND = 30
 MAX_RETRIES_PER_INVALID_PROPOSAL = 3
