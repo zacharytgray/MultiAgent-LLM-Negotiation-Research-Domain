@@ -16,7 +16,7 @@ class RudeAgent(BaseAgent):
     Same underlying behavior as default agent but with harsh personality.
     """
     
-    def __init__(self, agent_id: int, model_name: str, system_instructions_file: str, use_tools: bool = False):
+    def __init__(self, agent_id: int, model_name: str, system_instructions_file: str):
         """
         Initialize the rude agent.
         
@@ -24,13 +24,10 @@ class RudeAgent(BaseAgent):
             agent_id: Unique identifier for this agent (1 or 2)
             model_name: Name of the LLM model to use
             system_instructions_file: Path to system instructions file
-            use_tools: Whether to enable tool usage
         """
         super().__init__(agent_id, model_name, system_instructions_file)
-        self.use_tools = use_tools
-        
         # Create the underlying ollama agent
-        self.ollama_agent = OllamaAgent(model_name, system_instructions_file, use_tools)
+        self.ollama_agent = OllamaAgent(model_name, system_instructions_file)
     
     async def generate_response(self) -> str:
         """
@@ -41,16 +38,15 @@ class RudeAgent(BaseAgent):
         """
         return await self.ollama_agent.generateResponse()
     
-    def add_to_memory(self, role: str, content: str, tool_call_id: Optional[str] = None):
+    def add_to_memory(self, role: str, content: str):
         """
         Add a message to the agent's memory via the ollama agent.
         
         Args:
             role: Role of the message (system, user, assistant, tool)
             content: Content of the message
-            tool_call_id: Optional tool call ID for tool messages
         """
-        self.ollama_agent.addToMemory(role, content, tool_call_id)
+        self.ollama_agent.addToMemory(role, content)
     
     def reset_memory(self):
         """

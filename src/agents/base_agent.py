@@ -41,14 +41,13 @@ class BaseAgent(ABC):
         pass
     
     @abstractmethod
-    def add_to_memory(self, role: str, content: str, tool_call_id: Optional[str] = None):
+    def add_to_memory(self, role: str, content: str):
         """
         Add a message to the agent's memory.
         
         Args:
-            role: Role of the message (system, user, assistant, tool)
+            role: Role of the message (system, user, assistant)
             content: Content of the message
-            tool_call_id: Optional tool call ID for tool messages
         """
         pass
     

@@ -21,8 +21,7 @@ class BoulwareAgent(BaseAgent):
     def __init__(self, agent_id: int, model_name: str, system_instructions_file: str, 
                  initial_threshold: Optional[float] = None, 
                  decrease_rate: Optional[float] = None,
-                 min_threshold: Optional[float] = None,
-                 use_tools: bool = False):
+                 min_threshold: Optional[float] = None):
         """
         Initialize the Boulware agent.
         
@@ -33,20 +32,18 @@ class BoulwareAgent(BaseAgent):
             initial_threshold: Starting threshold percentage (defaults to settings.BOULWARE_INITIAL_THRESHOLD)
             decrease_rate: Amount to decrease threshold per turn (defaults to settings.BOULWARE_DECREASE_RATE)
             min_threshold: Minimum threshold value (defaults to settings.BOULWARE_MIN_THRESHOLD)
-            use_tools: Whether to enable tool usage
         """
         super().__init__(agent_id, model_name, system_instructions_file)
         self.initial_threshold = initial_threshold if initial_threshold is not None else BOULWARE_INITIAL_THRESHOLD
         self.decrease_rate = decrease_rate if decrease_rate is not None else BOULWARE_DECREASE_RATE
         self.min_threshold = min_threshold if min_threshold is not None else BOULWARE_MIN_THRESHOLD
         self.current_threshold = self.initial_threshold
-        self.use_tools = use_tools
         self.ranked_allocations = []
         self.all_possible_allocations = []
         self.intended_proposal = None
         
         # Create the underlying ollama agent with special system instructions
-        self.ollama_agent = OllamaAgent(model_name, system_instructions_file, use_tools)
+        self.ollama_agent = OllamaAgent(model_name, system_instructions_file)
     
     def _calculate_agent_welfare(self, allocation: Dict[str, List[str]]) -> float:
         """

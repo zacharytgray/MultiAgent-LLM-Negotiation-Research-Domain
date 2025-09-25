@@ -38,7 +38,7 @@ class AgentFactory:
             agent_id: Unique identifier for this agent (1 or 2)
             model_name: Name of the LLM model to use
             system_instructions_file: Path to system instructions file
-            **kwargs: Additional parameters specific to the agent type
+            **kwargs: Additional parameters specific to the agent type (tool-related parameters ignored)
             
         Returns:
             BaseAgent: Instance of the specified agent type
@@ -51,8 +51,6 @@ class AgentFactory:
             raise ValueError(f"Unknown agent type '{agent_type}'. Available types: {available_types}")
         
         agent_class = cls.AGENT_TYPES[agent_type]
-        
-        # Create agent with type-specific parameters
         return agent_class(agent_id, model_name, system_instructions_file, **kwargs)
     
     @classmethod
@@ -111,15 +109,12 @@ class AgentConfig:
         Returns:
             Dict: Configuration parameters
         """
-        return {
-            "use_tools": False
-        }
+        return {}
     
     @staticmethod
     def boulware_config(initial_threshold: Optional[float] = None, 
                        decrease_rate: Optional[float] = None,
-                       min_threshold: Optional[float] = None,
-                       use_tools: bool = False) -> Dict[str, Any]:
+                       min_threshold: Optional[float] = None) -> Dict[str, Any]:
         """
         Get configuration for Boulware agents.
         
@@ -127,7 +122,6 @@ class AgentConfig:
             initial_threshold: Starting threshold percentage (defaults to settings value)
             decrease_rate: Amount to decrease threshold per turn (defaults to settings value)
             min_threshold: Minimum threshold value (defaults to settings value)
-            use_tools: Whether to enable tool usage
             
         Returns:
             Dict: Configuration parameters
@@ -136,56 +130,44 @@ class AgentConfig:
             "initial_threshold": initial_threshold if initial_threshold is not None else BOULWARE_INITIAL_THRESHOLD,
             "decrease_rate": decrease_rate if decrease_rate is not None else BOULWARE_DECREASE_RATE,
             "min_threshold": min_threshold if min_threshold is not None else BOULWARE_MIN_THRESHOLD,
-            "use_tools": use_tools
         }
     
     @staticmethod
-    def fixed_price_config(fixed_threshold: Optional[float] = None,
-                          use_tools: bool = False) -> Dict[str, Any]:
+    def fixed_price_config(fixed_threshold: Optional[float] = None) -> Dict[str, Any]:
         """
         Get configuration for Fixed Price agents.
         
         Args:
             fixed_threshold: Fixed threshold percentage (defaults to Boulware initial threshold)
-            use_tools: Whether to enable tool usage
             
         Returns:
             Dict: Configuration parameters
         """
         return {
             "fixed_threshold": fixed_threshold if fixed_threshold is not None else BOULWARE_INITIAL_THRESHOLD,
-            "use_tools": use_tools
         }
     
     @staticmethod
-    def charming_config(use_tools: bool = False) -> Dict[str, Any]:
+    def charming_config() -> Dict[str, Any]:
         """
         Get configuration for Charming agents.
         
-        Args:
-            use_tools: Whether to enable tool usage
             
         Returns:
             Dict: Configuration parameters
         """
-        return {
-            "use_tools": use_tools
-        }
+        return {}
     
     @staticmethod
-    def rude_config(use_tools: bool = False) -> Dict[str, Any]:
+    def rude_config() -> Dict[str, Any]:
         """
         Get configuration for Rude agents.
         
-        Args:
-            use_tools: Whether to enable tool usage
             
         Returns:
             Dict: Configuration parameters
         """
-        return {
-            "use_tools": use_tools
-        }
+        return {}
     
     @staticmethod
     def get_config_for_type(agent_type: str, **kwargs) -> Dict[str, Any]:
@@ -212,6 +194,7 @@ class AgentConfig:
         else:
             config = {}
         
-        # Override with any provided kwargs
+        # Remove tool-related parameters from kwargs
+        kwargs.pop("use_tools", None)
         config.update(kwargs)
         return config

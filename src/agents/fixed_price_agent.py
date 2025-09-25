@@ -19,7 +19,7 @@ class FixedPriceAgent(BaseAgent):
     """
     
     def __init__(self, agent_id: int, model_name: str, system_instructions_file: str, 
-                 fixed_threshold: Optional[float] = None, use_tools: bool = False):
+                 fixed_threshold: Optional[float] = None):
         """
         Initialize the Fixed Price agent.
         
@@ -28,17 +28,15 @@ class FixedPriceAgent(BaseAgent):
             model_name: Name of the LLM model to use
             system_instructions_file: Path to system instructions file
             fixed_threshold: Fixed threshold percentage (defaults to settings.BOULWARE_INITIAL_THRESHOLD)
-            use_tools: Whether to enable tool usage
         """
         super().__init__(agent_id, model_name, system_instructions_file)
         self.fixed_threshold = fixed_threshold if fixed_threshold is not None else BOULWARE_INITIAL_THRESHOLD
-        self.use_tools = use_tools
         self.ranked_allocations = []
         self.all_possible_allocations = []
         self.intended_proposal = None
         
         # Create the underlying ollama agent with special system instructions
-        self.ollama_agent = OllamaAgent(model_name, system_instructions_file, use_tools)
+        self.ollama_agent = OllamaAgent(model_name, system_instructions_file)
     
     def _calculate_agent_welfare(self, allocation: Dict[str, List[str]]) -> float:
         """
