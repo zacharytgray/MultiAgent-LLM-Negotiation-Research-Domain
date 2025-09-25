@@ -4,6 +4,7 @@ from langchain_ollama import ChatOllama
 from colorama import Fore
 from .ollamaTools import ALL_TOOLS  # Import dynamic tool collection
 from langchain_core.messages import ToolMessage
+from src.utils.ThinkingModelProcessor import strip_thinking_blocks, has_thinking_blocks
 
 class Agent:
     def __init__(self, modelName, instructionsFilepath, use_tools: bool = False):
@@ -80,7 +81,15 @@ class Agent:
 
             self.addToMemory('assistant', response)
 
-            return response.content.strip()
+            # Get the raw response content
+            raw_content = response.content.strip()
+            
+            # Automatically strip thinking blocks if present
+            if has_thinking_blocks(raw_content):
+                cleaned_content = strip_thinking_blocks(raw_content)
+                return cleaned_content
+            else:
+                return raw_content
         except Exception as e:
             print(f"{Fore.RED}Error generating response: {e}{Fore.RESET}")
             return None
