@@ -51,7 +51,7 @@ class Agent:
             chain = history | self.model
             response = await chain.ainvoke({})
 
-            self.addToMemory('assistant', response)
+            self.addToMemory('assistant', response.content)
 
             # Get the raw response content
             raw_content = response.content.strip()
