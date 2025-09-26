@@ -64,7 +64,7 @@ class Agent:
                 return raw_content
         except Exception as e:
             print(f"{Fore.RED}Error generating response: {e}{Fore.RESET}")
-            return None
+            return ""
 
     def printMemory(self, skipSystemMessage=False):
         if skipSystemMessage:
