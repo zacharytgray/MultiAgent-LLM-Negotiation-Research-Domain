@@ -206,7 +206,16 @@ When you reach an agreement, end your message with "AGREE".
                         allocations.append({'agent1': a1, 'agent2': a2})
                     return allocations
 
-                def score_allocation(allocation, items, agent):
+                def score_allocation_welfare(allocation, items):
+                    score = 0.0
+                    for item in items:
+                        if item.name in allocation['agent1']:
+                            score += item.agent1Value
+                        elif item.name in allocation['agent2']:
+                            score += item.agent2Value
+                    return score
+
+                def score_agent_value(allocation, items, agent):
                     score = 0.0
                     for item in items:
                         if item.name in allocation[agent]:
@@ -215,29 +224,29 @@ When you reach an agreement, end your message with "AGREE".
 
                 items = round_obj.items
                 allAllocations = all_possible_allocations(items)
-                rankedAllocations1 = sorted(allAllocations, key=lambda alloc: score_allocation(alloc, items, 'agent1'))
-                rankedAllocations2 = sorted(allAllocations, key=lambda alloc: score_allocation(alloc, items, 'agent2'))
+                rankedAllocations = sorted(allAllocations, key=lambda alloc: score_allocation_welfare(alloc, items))
                 fallbackIndexPercent = 0.10
-                fallbackIndex = int(fallbackIndexPercent * len(allAllocations))
-                fallbackIndex = min(max(fallbackIndex, 0), len(allAllocations)-1)
-                fallbackAlloc1 = rankedAllocations1[fallbackIndex]
-                fallbackAlloc2 = rankedAllocations2[fallbackIndex]
-                fallbackScore1 = score_allocation(fallbackAlloc1, items, 'agent1')
-                fallbackScore2 = score_allocation(fallbackAlloc2, items, 'agent2')
+                fallbackIndex = int(fallbackIndexPercent * len(rankedAllocations))
+                fallbackIndex = min(max(fallbackIndex, 0), len(rankedAllocations)-1)
+                fallbackAlloc = rankedAllocations[fallbackIndex]
+                fallbackScore1 = score_agent_value(fallbackAlloc, items, 'agent1')
+                fallbackScore2 = score_agent_value(fallbackAlloc, items, 'agent2')
                 # Prepare agent-specific pressure messages
                 pressure_message_agent1 = (
                     f"⚠️  TIME PRESSURE ALERT: You have only {turns_remaining} turns remaining to reach an agreement! "
                     "There is a strict time limit in this negotiation. If you do not come to an agreement soon, "
-                    f"you will receive a fallback allocation with value of only {fallbackScore1:.2f}.\n"
+                    f"you will receive a fallback allocation.\n"
+                    f"Your fallback allocation: {fallbackAlloc['agent1']} (Value: {fallbackScore1:.2f})\n"
                     "You must prioritize reaching an agreement quickly to avoid this penalty. "
                     "Make item sacrifices as necessary to avoid this penalty."
                 )
                 pressure_message_agent2 = (
                     f"⚠️  TIME PRESSURE ALERT: You have only {turns_remaining} turns remaining to reach an agreement! "
                     "There is a strict time limit in this negotiation. If you do not come to an agreement soon, "
-                    f"you will receive a fallback allocation with value of only {fallbackScore2:.2f}.\n"
+                    f"you will receive a fallback allocation.\n"
+                    f"Your fallback allocation: {fallbackAlloc['agent2']} (Value: {fallbackScore2:.2f})\n"
                     "You must prioritize reaching an agreement quickly to avoid this penalty. "
-                    "Make item sacrificesas necessary to avoi d this penalty."
+                    "Make item sacrifices as necessary to avoid this penalty."
                 )
                 
                 # Send pressure message and update pressure message sent dict
@@ -499,15 +508,42 @@ Present this proposal naturally as if you determined it through your own strateg
                 reached_consensus = True
                 final_proposer = getattr(round_obj, 'final_proposer', None)
             else:
-                # No consensus reached - use empty allocation
-                final_allocation = {"agent1": [], "agent2": []}
+                # No consensus reached - use fallback allocation
+                # Recompute fallback allocation using welfare-based ranking
+                items = round_obj.items
+                def all_possible_allocations(items):
+                    n = len(items)
+                    allocations = []
+                    for bits in range(2**n):
+                        a1, a2 = [], []
+                        for i in range(n):
+                            if (bits >> i) & 1:
+                                a1.append(items[i].name)
+                            else:
+                                a2.append(items[i].name)
+                        allocations.append({'agent1': a1, 'agent2': a2})
+                    return allocations
+
+                def score_allocation_welfare(allocation, items):
+                    score = 0.0
+                    for item in items:
+                        if item.name in allocation['agent1']:
+                            score += item.agent1Value
+                        elif item.name in allocation['agent2']:
+                            score += item.agent2Value
+                    return score
+
+                allAllocations = all_possible_allocations(items)
+                rankedAllocations = sorted(allAllocations, key=lambda alloc: score_allocation_welfare(alloc, items))
+                fallbackIndexPercent = 0.10
+                fallbackIndex = int(fallbackIndexPercent * len(rankedAllocations))
+                fallbackIndex = min(max(fallbackIndex, 0), len(rankedAllocations)-1)
+                fallbackAlloc = rankedAllocations[fallbackIndex]
+                final_allocation = fallbackAlloc
                 reached_consensus = False
                 final_proposer = None
-                # Set empty final_allocation on round_obj if it doesn't exist
-                if not hasattr(round_obj, 'final_allocation') or not round_obj.final_allocation:
-                    round_obj.final_allocation = final_allocation
-                if not hasattr(round_obj, 'final_proposer'):
-                    round_obj.final_proposer = final_proposer
+                round_obj.final_allocation = final_allocation
+                round_obj.final_proposer = final_proposer
             
             log_entry = self.csv_logger.create_log_entry(
                 round_obj=round_obj,

@@ -43,28 +43,31 @@ class Agent:
         self.memory = [original_system_message] 
 
     async def generateResponse(self, inputTextRole=None, inputText=None): # Generate response based on input
-        try:
-            if inputText and inputTextRole:
-                self.addToMemory(inputTextRole, inputText)
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                if inputText and inputTextRole:
+                    self.addToMemory(inputTextRole, inputText)
 
-            history = ChatPromptTemplate.from_messages(self.memory)
-            chain = history | self.model
-            response = await chain.ainvoke({})
+                history = ChatPromptTemplate.from_messages(self.memory)
+                chain = history | self.model
+                response = await chain.ainvoke({})
 
-            self.addToMemory('assistant', response.content)
+                self.addToMemory('assistant', response.content)
 
-            # Get the raw response content
-            raw_content = response.content.strip()
-            
-            # Automatically strip thinking blocks if present
-            if has_thinking_blocks(raw_content):
-                cleaned_content = strip_thinking_blocks(raw_content)
-                return cleaned_content
-            else:
-                return raw_content
-        except Exception as e:
-            print(f"{Fore.RED}Error generating response: {e}{Fore.RESET}")
-            return ""
+                # Get the raw response content
+                raw_content = response.content.strip()
+                
+                # Automatically strip thinking blocks if present
+                if has_thinking_blocks(raw_content):
+                    cleaned_content = strip_thinking_blocks(raw_content)
+                    return cleaned_content
+                else:
+                    return raw_content
+            except Exception as e:
+                print(f"{Fore.RED}Error generating response (attempt {attempt}): {e}{Fore.RESET}")
+                if attempt == max_retries:
+                    return ""
 
     def printMemory(self, skipSystemMessage=False):
         if skipSystemMessage:
