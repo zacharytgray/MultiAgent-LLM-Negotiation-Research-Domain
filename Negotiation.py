@@ -192,29 +192,63 @@ When you reach an agreement, end your message with "AGREE".
             # Add time pressure message for non-deterministic agents when 5 turns remain
             turns_remaining = max_turns - turn_count
             if turns_remaining <= 5:
-                pressure_message = (
+                # --- Fallback allocation calculation ---
+                def all_possible_allocations(items):
+                    n = len(items)
+                    allocations = []
+                    for bits in range(2**n):
+                        a1, a2 = [], []
+                        for i in range(n):
+                            if (bits >> i) & 1:
+                                a1.append(items[i].name)
+                            else:
+                                a2.append(items[i].name)
+                        allocations.append({'agent1': a1, 'agent2': a2})
+                    return allocations
+
+                def score_allocation(allocation, items, agent):
+                    score = 0.0
+                    for item in items:
+                        if item.name in allocation[agent]:
+                            score += getattr(item, f'{agent}Value')
+                    return score
+
+                items = round_obj.items
+                allAllocations = all_possible_allocations(items)
+                rankedAllocations1 = sorted(allAllocations, key=lambda alloc: score_allocation(alloc, items, 'agent1'))
+                rankedAllocations2 = sorted(allAllocations, key=lambda alloc: score_allocation(alloc, items, 'agent2'))
+                fallbackIndexPercent = 0.10
+                fallbackIndex = int(fallbackIndexPercent * len(allAllocations))
+                fallbackIndex = min(max(fallbackIndex, 0), len(allAllocations)-1)
+                fallbackAlloc1 = rankedAllocations1[fallbackIndex]
+                fallbackAlloc2 = rankedAllocations2[fallbackIndex]
+                fallbackScore1 = score_allocation(fallbackAlloc1, items, 'agent1')
+                fallbackScore2 = score_allocation(fallbackAlloc2, items, 'agent2')
+                # Prepare agent-specific pressure messages
+                pressure_message_agent1 = (
                     f"⚠️  TIME PRESSURE ALERT: You have only {turns_remaining} turns remaining to reach an agreement! "
                     "There is a strict time limit in this negotiation. If you do not come to an agreement soon, "
-                    "you will receive a fallback reward that is significantly worse than any outcome you would "
-                    "receive if you make a deal. You must prioritize reaching an agreement quickly to avoid this penalty."
+                    f"you will receive a fallback allocation.\n"
+                    f"Your fallback allocation: {fallbackAlloc1['agent1']} (Value: {fallbackScore1:.2f})\n"
+                    "You must prioritize reaching an agreement quickly to avoid this penalty. "
+                    "Make item sacrifices as necessary to avoid this penalty."
+                )
+                pressure_message_agent2 = (
+                    f"⚠️  TIME PRESSURE ALERT: You have only {turns_remaining} turns remaining to reach an agreement! "
+                    "There is a strict time limit in this negotiation. If you do not come to an agreement soon, "
+                    f"you will receive a fallback allocation.\n"
+                    f"Your fallback allocation: {fallbackAlloc2['agent2']} (Value: {fallbackScore2:.2f})\n"
+                    "You must prioritize reaching an agreement quickly to avoid this penalty. "
                     "Make item sacrifices as necessary to avoid this penalty."
                 )
                 
-                # Add pressure message to current agent if non-deterministic and not already sent
+                # Send pressure message and update pressure message sent dict
                 if (not current_agent.should_make_deterministic_proposal(turn_count) and 
                     not pressure_message_sent[current_agent_num]):
                     print(f"{Fore.YELLOW}📢 Sending time pressure alert to Agent {current_agent_num} ({current_agent.agent_type if hasattr(current_agent, 'agent_type') else 'Unknown'}):{Fore.RESET}")
-                    print(f"{Fore.YELLOW}    {pressure_message}{Fore.RESET}")
-                    current_agent.add_to_memory('user', pressure_message)
+                    msg = pressure_message_agent1 if current_agent_num == 1 else pressure_message_agent2
+                    current_agent.add_to_memory('user', msg)
                     pressure_message_sent[current_agent_num] = True
-                
-                # Add pressure message to other agent if non-deterministic and not already sent
-                if (not other_agent.should_make_deterministic_proposal(turn_count) and 
-                    not pressure_message_sent[other_agent_num]):
-                    print(f"{Fore.YELLOW}📢 Sending time pressure alert to Agent {other_agent_num} ({other_agent.agent_type if hasattr(other_agent, 'agent_type') else 'Unknown'}):{Fore.RESET}")
-                    print(f"{Fore.YELLOW}    {pressure_message}{Fore.RESET}")
-                    other_agent.add_to_memory('user', pressure_message)
-                    pressure_message_sent[other_agent_num] = True
             
             # Process agent turn with retry logic for invalid proposals
             response, turn_successful = await self._process_agent_turn_with_retry(
