@@ -228,18 +228,16 @@ When you reach an agreement, end your message with "AGREE".
                 pressure_message_agent1 = (
                     f"⚠️  TIME PRESSURE ALERT: You have only {turns_remaining} turns remaining to reach an agreement! "
                     "There is a strict time limit in this negotiation. If you do not come to an agreement soon, "
-                    f"you will receive a fallback allocation.\n"
-                    f"Your fallback allocation: {fallbackAlloc1['agent1']} (Value: {fallbackScore1:.2f})\n"
+                    f"you will receive a fallback allocation with value of only {fallbackScore1:.2f}.\n"
                     "You must prioritize reaching an agreement quickly to avoid this penalty. "
                     "Make item sacrifices as necessary to avoid this penalty."
                 )
                 pressure_message_agent2 = (
                     f"⚠️  TIME PRESSURE ALERT: You have only {turns_remaining} turns remaining to reach an agreement! "
                     "There is a strict time limit in this negotiation. If you do not come to an agreement soon, "
-                    f"you will receive a fallback allocation.\n"
-                    f"Your fallback allocation: {fallbackAlloc2['agent2']} (Value: {fallbackScore2:.2f})\n"
+                    f"you will receive a fallback allocation with value of only {fallbackScore2:.2f}.\n"
                     "You must prioritize reaching an agreement quickly to avoid this penalty. "
-                    "Make item sacrifices as necessary to avoid this penalty."
+                    "Make item sacrificesas necessary to avoi d this penalty."
                 )
                 
                 # Send pressure message and update pressure message sent dict
