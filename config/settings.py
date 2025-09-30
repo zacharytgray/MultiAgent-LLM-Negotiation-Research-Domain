@@ -27,7 +27,7 @@ USE_TOOLS_BY_DEFAULT = False
 # Round settings
 DEFAULT_NUM_ROUNDS = 100
 DEFAULT_ITEMS_PER_ROUND = 4
-MAX_TURNS_PER_ROUND = 30
+MAX_TURNS_PER_ROUND = 15
 MAX_RETRIES_PER_INVALID_PROPOSAL = 3
 DEFAULT_STARTING_AGENT = 1  # 1 or 2
 
@@ -93,8 +93,7 @@ EFFICIENCY_THRESHOLDS = {
 
 # Boulware agent hyperparameters
 BOULWARE_INITIAL_THRESHOLD = 0.85  # Starting threshold percentage (0.0 to 1.0)
-BOULWARE_DECREASE_RATE = 0.03      # Amount to decrease threshold per turn
-BOULWARE_MIN_THRESHOLD = 0.1       # Minimum threshold (won't go below this)
+BOULWARE_MIN_THRESHOLD = 0.5       # Minimum threshold (won't go below this)
 
 # =============================================================================
 # VALIDATION SETTINGS

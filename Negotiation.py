@@ -236,7 +236,7 @@ When you reach an agreement, end your message with "AGREE".
                     f"⚠️  TIME PRESSURE ALERT: You have only {turns_remaining} turns remaining to reach an agreement! "
                     "There is a strict time limit in this negotiation. If you do not come to an agreement soon, "
                     f"you will receive a fallback allocation.\n"
-                    f"Your fallback allocation: {fallbackAlloc['agent1']} (Value: {fallbackScore1:.2f})\n"
+                    f"Your fallback allocation value: {fallbackScore1:.2f}\n"
                     "You must prioritize reaching an agreement quickly to avoid this penalty. "
                     "Make item sacrifices as necessary to avoid this penalty."
                 )
@@ -244,7 +244,7 @@ When you reach an agreement, end your message with "AGREE".
                     f"⚠️  TIME PRESSURE ALERT: You have only {turns_remaining} turns remaining to reach an agreement! "
                     "There is a strict time limit in this negotiation. If you do not come to an agreement soon, "
                     f"you will receive a fallback allocation.\n"
-                    f"Your fallback allocation: {fallbackAlloc['agent2']} (Value: {fallbackScore2:.2f})\n"
+                    f"Your fallback allocation value: {fallbackScore2:.2f}\n"
                     "You must prioritize reaching an agreement quickly to avoid this penalty. "
                     "Make item sacrifices as necessary to avoid this penalty."
                 )
@@ -267,8 +267,10 @@ When you reach an agreement, end your message with "AGREE".
                 print(f"{Fore.RED}⚠️  Agent {current_agent_num} failed to provide a valid response after {max_retries_per_turn} retries. Ending round.{Fore.RESET}")
                 break
             
-            # Add current agent's response to other agent's memory
-            other_agent.add_to_memory('user', f"Agent {current_agent_num}: {response}")
+            # Add system message with turns remaining to the agent's response before sending to the other agent
+            system_msg = f"\n\n**SYSTEM MESSAGE: YOU HAVE {turns_remaining} TURNS REMAINING TO COME TO AN AGREEMENT**"
+            response_with_system = f"{response}{system_msg}"
+            other_agent.add_to_memory('user', f"Agent {current_agent_num}: {response_with_system}")
             
             # Store conversation history
             round_obj.conversation_history.append((current_agent_num, response))
@@ -580,7 +582,6 @@ Present this proposal naturally as if you determined it through your own strateg
         # Initialize all parameters as None
         agent_params = {
             'boulware_initial_threshold': None,
-            'boulware_decrease_rate': None,
             'boulware_min_threshold': None,
             'boulware_final_threshold': None,
             'fixed_price_threshold': None
@@ -591,7 +592,6 @@ Present this proposal naturally as if you determined it through your own strateg
             if isinstance(agent, BoulwareAgent):
                 # Get Boulware parameters from the first Boulware agent found
                 agent_params['boulware_initial_threshold'] = agent.initial_threshold
-                agent_params['boulware_decrease_rate'] = agent.decrease_rate
                 agent_params['boulware_min_threshold'] = agent.min_threshold
                 agent_params['boulware_final_threshold'] = agent.current_threshold
                 break  # Use parameters from first Boulware agent found

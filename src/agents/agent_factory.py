@@ -10,7 +10,7 @@ from src.agents.boulware_agent import BoulwareAgent
 from src.agents.fixed_price_agent import FixedPriceAgent
 from src.agents.charming_agent import CharmingAgent
 from src.agents.rude_agent import RudeAgent
-from config.settings import BOULWARE_INITIAL_THRESHOLD, BOULWARE_DECREASE_RATE, BOULWARE_MIN_THRESHOLD
+from config.settings import BOULWARE_INITIAL_THRESHOLD, BOULWARE_MIN_THRESHOLD
 
 
 class AgentFactory:
@@ -113,14 +113,12 @@ class AgentConfig:
     
     @staticmethod
     def boulware_config(initial_threshold: Optional[float] = None, 
-                       decrease_rate: Optional[float] = None,
                        min_threshold: Optional[float] = None) -> Dict[str, Any]:
         """
         Get configuration for Boulware agents.
         
         Args:
             initial_threshold: Starting threshold percentage (defaults to settings value)
-            decrease_rate: Amount to decrease threshold per turn (defaults to settings value)
             min_threshold: Minimum threshold value (defaults to settings value)
             
         Returns:
@@ -128,7 +126,6 @@ class AgentConfig:
         """
         return {
             "initial_threshold": initial_threshold if initial_threshold is not None else BOULWARE_INITIAL_THRESHOLD,
-            "decrease_rate": decrease_rate if decrease_rate is not None else BOULWARE_DECREASE_RATE,
             "min_threshold": min_threshold if min_threshold is not None else BOULWARE_MIN_THRESHOLD,
         }
     

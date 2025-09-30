@@ -9,7 +9,7 @@ from src.core.Item import Item
 from src.agents.base_agent import BaseAgent
 from src.agents.ollamaAgentModule import Agent as OllamaAgent
 from src.utils.MessageParser import ParsedProposal
-from config.settings import BOULWARE_INITIAL_THRESHOLD, BOULWARE_DECREASE_RATE, BOULWARE_MIN_THRESHOLD
+from config.settings import BOULWARE_INITIAL_THRESHOLD, BOULWARE_MIN_THRESHOLD
 
 
 class BoulwareAgent(BaseAgent):
@@ -20,7 +20,6 @@ class BoulwareAgent(BaseAgent):
     
     def __init__(self, agent_id: int, model_name: str, system_instructions_file: str, 
                  initial_threshold: Optional[float] = None, 
-                 decrease_rate: Optional[float] = None,
                  min_threshold: Optional[float] = None):
         """
         Initialize the Boulware agent.
@@ -30,12 +29,10 @@ class BoulwareAgent(BaseAgent):
             model_name: Name of the LLM model to use
             system_instructions_file: Path to system instructions file
             initial_threshold: Starting threshold percentage (defaults to settings.BOULWARE_INITIAL_THRESHOLD)
-            decrease_rate: Amount to decrease threshold per turn (defaults to settings.BOULWARE_DECREASE_RATE)
             min_threshold: Minimum threshold value (defaults to settings.BOULWARE_MIN_THRESHOLD)
         """
         super().__init__(agent_id, model_name, system_instructions_file)
         self.initial_threshold = initial_threshold if initial_threshold is not None else BOULWARE_INITIAL_THRESHOLD
-        self.decrease_rate = decrease_rate if decrease_rate is not None else BOULWARE_DECREASE_RATE
         self.min_threshold = min_threshold if min_threshold is not None else BOULWARE_MIN_THRESHOLD
         self.current_threshold = self.initial_threshold
         self.ranked_allocations = []
@@ -137,14 +134,23 @@ class BoulwareAgent(BaseAgent):
     
     def _decrease_threshold(self, turn_number: int):
         """
-        Decrease threshold according to Boulware schedule.
-        
+        Decrease threshold according to a true Boulware (nonlinear) schedule.
+        Starts off firm, then decreases more rapidly as rounds progress.
+        Scales to MAX_TURNS_PER_ROUND from settings.py.
         Args:
-            turn_number: Current turn number
+            turn_number: Current turn number (0-based)
         """
-        # Linear decrease using configurable rate
-        self.current_threshold = max(self.min_threshold, 
-                                   self.initial_threshold - (turn_number * self.decrease_rate))
+        from config.settings import MAX_TURNS_PER_ROUND
+        # Boulware formula: threshold = min + (initial - min) * (1 - (t/T)^e)
+        # where t = current turn, T = max turns, e = boulware exponent (large = more boulware)
+        e = 5  # Exponent for Boulware curve; can be made configurable
+        T = MAX_TURNS_PER_ROUND
+        t = min(turn_number, T)
+        initial = self.initial_threshold
+        min_thr = self.min_threshold
+        # Boulware curve: slow at first, then drops quickly
+        boulware_value = min_thr + (initial - min_thr) * (1 - pow(t / T, e))
+        self.current_threshold = max(min_thr, min(initial, boulware_value))
     
     async def generate_response(self) -> str:
         """
