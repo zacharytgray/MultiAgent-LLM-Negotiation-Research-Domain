@@ -143,7 +143,7 @@ class BoulwareAgent(BaseAgent):
         from config.settings import MAX_TURNS_PER_ROUND
         # Boulware formula: threshold = min + (initial - min) * (1 - (t/T)^e)
         # where t = current turn, T = max turns, e = boulware exponent (large = more boulware)
-        e = 5  # Exponent for Boulware curve; can be made configurable
+        e = 3  # Exponent for Boulware curve; can be made configurable
         T = MAX_TURNS_PER_ROUND
         t = min(turn_number, T)
         initial = self.initial_threshold
