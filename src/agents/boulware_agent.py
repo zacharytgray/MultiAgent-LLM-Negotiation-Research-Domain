@@ -16,6 +16,7 @@ class BoulwareAgent(BaseAgent):
     """
     Boulware agent that uses a deterministic strategy with decreasing thresholds.
     The LLM is used as a wrapper to present the deterministic proposals naturally.
+    Uses a tiered utility-based approach for smoother concession curves.
     """
     
     def __init__(self, agent_id: int, model_name: str, system_instructions_file: str, 
@@ -38,6 +39,9 @@ class BoulwareAgent(BaseAgent):
         self.ranked_allocations = []
         self.all_possible_allocations = []
         self.intended_proposal = None
+        self.utility_tiers = {}  # Maps normalized utility values to lists of allocations
+        self.sorted_utility_values = []  # Sorted list of utility values for binary search
+        self.max_welfare = 0.0  # Maximum possible welfare (for normalization)
         
         # Create the underlying ollama agent with special system instructions
         self.ollama_agent = OllamaAgent(model_name, system_instructions_file)
@@ -95,27 +99,83 @@ class BoulwareAgent(BaseAgent):
     def _rank_allocations_by_welfare(self) -> List[Dict[str, List[str]]]:
         """
         Rank all possible allocations from lowest to highest welfare for this agent.
+        Also builds utility tiers dictionary grouping allocations by normalized utility.
         
         Returns:
             List[Dict]: Sorted allocations (lowest welfare first, highest welfare last)
         """
         all_allocations = self._generate_all_possible_allocations()
         
-        # Calculate welfare for each allocation and sort
+        # Calculate welfare for each allocation
         allocation_welfare_pairs = []
         for allocation in all_allocations:
             welfare = self._calculate_agent_welfare(allocation)
             allocation_welfare_pairs.append((allocation, welfare))
         
-        # Sort by welfare (lowest first)
-        allocation_welfare_pairs.sort(key=lambda x: x[1])
+        # Find max welfare for normalization
+        self.max_welfare = max([welfare for _, welfare in allocation_welfare_pairs]) if allocation_welfare_pairs else 1.0
         
-        # Return just the allocations
+        # Build utility tiers dictionary grouping allocations by normalized utility
+        self.utility_tiers = {}
+        for allocation, welfare in allocation_welfare_pairs:
+            # Normalize utility to [0.0, 1.0]
+            normalized_utility = welfare / self.max_welfare if self.max_welfare > 0 else 0
+            # Round to 2 decimal places for tiering
+            rounded_utility = round(normalized_utility, 2)
+            
+            if rounded_utility not in self.utility_tiers:
+                self.utility_tiers[rounded_utility] = []
+            self.utility_tiers[rounded_utility].append(allocation)
+        
+        # Create sorted list of utility values for binary search
+        self.sorted_utility_values = sorted(self.utility_tiers.keys())
+        
+        # Sort by welfare (lowest first) and return traditional ranked list for compatibility
+        allocation_welfare_pairs.sort(key=lambda x: x[1])
         return [pair[0] for pair in allocation_welfare_pairs]
     
+    def _find_nearest_utility_tier(self, target_utility: float) -> float:
+        """
+        Use binary search to find the nearest utility tier that is greater than or equal to the target.
+        Always rounds up to ensure we meet minimum utility requirements.
+        
+        Args:
+            target_utility: The target utility value to search for
+            
+        Returns:
+            float: The nearest utility tier value (rounded up)
+        """
+        if not self.sorted_utility_values:
+            return 0.0
+            
+        # If target is higher than our max utility, return the max
+        if target_utility >= self.sorted_utility_values[-1]:
+            return self.sorted_utility_values[-1]
+            
+        # If target is lower than our min utility, return the min
+        if target_utility <= self.sorted_utility_values[0]:
+            return self.sorted_utility_values[0]
+            
+        # Binary search to find insertion point
+        left, right = 0, len(self.sorted_utility_values) - 1
+        
+        while left <= right:
+            mid = (left + right) // 2
+            if self.sorted_utility_values[mid] < target_utility:
+                left = mid + 1
+            elif self.sorted_utility_values[mid] > target_utility:
+                right = mid - 1
+            else:
+                return self.sorted_utility_values[mid]  # Exact match
+        
+        # At this point, left is the insertion point
+        # Return the utility tier at or just above the target
+        return self.sorted_utility_values[left]
+        
     def _get_boulware_proposal_index(self) -> int:
         """
         Get the index in ranked_allocations based on current threshold.
+        Kept for backward compatibility but no longer used directly.
         
         Returns:
             int: Index of the proposal to make
@@ -180,6 +240,9 @@ class BoulwareAgent(BaseAgent):
         self.current_threshold = self.initial_threshold
         self.ranked_allocations = []
         self.all_possible_allocations = []
+        self.utility_tiers = {}
+        self.sorted_utility_values = []
+        self.max_welfare = 0.0
         self.intended_proposal = None
     
     def set_items(self, items: List[Item]):
@@ -227,7 +290,7 @@ class BoulwareAgent(BaseAgent):
     
     def get_deterministic_proposal(self, turn_number: int = 1) -> Optional[Dict]:
         """
-        Get the deterministic proposal based on Boulware strategy.
+        Get the deterministic proposal based on Boulware strategy using utility tiers.
         
         Args:
             turn_number: Current turn number in the negotiation
@@ -235,19 +298,35 @@ class BoulwareAgent(BaseAgent):
         Returns:
             Optional[Dict]: Deterministic allocation dict
         """
-        if not self.ranked_allocations:
+        if not self.utility_tiers or not self.sorted_utility_values:
             return None
         
-        # Always use threshold-based proposal (whether initial or counter-proposal)
-        proposal_index = self._get_boulware_proposal_index()
-        self.intended_proposal = self.ranked_allocations[proposal_index]
+        # Update threshold based on turn number
+        self._decrease_threshold(turn_number)
         
-        return self.intended_proposal
+        # Convert threshold to target utility
+        target_utility = self.current_threshold
+        
+        # Find the nearest utility tier that meets or exceeds our target
+        nearest_tier = self._find_nearest_utility_tier(target_utility)
+        
+        # Get the first allocation from that tier
+        if nearest_tier in self.utility_tiers and self.utility_tiers[nearest_tier]:
+            self.intended_proposal = self.utility_tiers[nearest_tier][0]
+            return self.intended_proposal
+        
+        # Fallback to old method if something went wrong
+        if self.ranked_allocations:
+            proposal_index = self._get_boulware_proposal_index()
+            self.intended_proposal = self.ranked_allocations[proposal_index]
+            return self.intended_proposal
+            
+        return None
     
     def should_accept_proposal(self, proposal: ParsedProposal, turn_number: int) -> bool:
         """
         Check if the Boulware agent should accept the given proposal.
-        Accept if the proposal gives us welfare >= current threshold.
+        Accept if the proposal gives us normalized utility >= current threshold.
         
         Args:
             proposal: The proposal to evaluate
@@ -262,16 +341,15 @@ class BoulwareAgent(BaseAgent):
         # Update threshold based on turn number
         self._decrease_threshold(turn_number)
         
+        # Calculate welfare and normalize
         proposal_welfare = self._calculate_agent_welfare(proposal.allocation)
+        proposal_utility = proposal_welfare / self.max_welfare if self.max_welfare > 0 else 0
         
-        # Find the welfare that corresponds to our current threshold
-        if not self.ranked_allocations:
-            return False
+        # Find the utility tier that corresponds to our current threshold
+        target_tier = self._find_nearest_utility_tier(self.current_threshold)
         
-        threshold_index = self._get_boulware_proposal_index()
-        threshold_welfare = self._calculate_agent_welfare(self.ranked_allocations[threshold_index])
-        
-        return proposal_welfare >= threshold_welfare
+        # Accept if proposal utility meets or exceeds our current threshold-based tier
+        return proposal_utility >= target_tier
     
     def validate_output_matches_intent(self, response: str, intended_proposal: Optional[Dict]) -> bool:
         """
@@ -330,6 +408,10 @@ class BoulwareAgent(BaseAgent):
             "agent_type": "boulware",
             "current_threshold": self.current_threshold,
             "initial_threshold": self.initial_threshold,
+            "min_threshold": self.min_threshold,
+            "max_welfare": self.max_welfare,
             "num_allocations": len(self.ranked_allocations),
+            "num_utility_tiers": len(self.utility_tiers),
+            "utility_range": [min(self.sorted_utility_values), max(self.sorted_utility_values)] if self.sorted_utility_values else [0, 0],
             "intended_proposal": self.intended_proposal
         }
