@@ -103,6 +103,14 @@ class HyperLoRALinear(nn.Module):
         # B: Zeros
         nn.init.zeros_(self.lora_B)
         
+    def to(self, *args, **kwargs):
+        super().to(*args, **kwargs)
+        # Ensure our parameters are actually moved if using .to() manually
+        self.lora_A = self.lora_A.to(*args, **kwargs)
+        self.lora_B = self.lora_B.to(*args, **kwargs)
+        self.hyper_net = self.hyper_net.to(*args, **kwargs)
+        return self
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass with injected HyperLoRA logic.
@@ -136,6 +144,14 @@ class HyperLoRALinear(nn.Module):
         # Cast input to LoRA weights dtype if needed
         x_lora = x.to(self.lora_A.dtype)
         
+        # FIX: Ensure lora_A/B are on the correct device.
+        # This can happen if the base model was loaded on GPU but new modules initialized on CPU
+        # and not properly caught by accelerate/model.to().
+        if self.lora_A.device != x.device:
+            self.lora_A.data = self.lora_A.data.to(x.device)
+            self.lora_B.data = self.lora_B.data.to(x.device)
+            self.hyper_net.to(x.device)
+
         # z = x @ A.T -> [Batch, ..., rank]
         z = F.linear(x_lora, self.lora_A) 
         
