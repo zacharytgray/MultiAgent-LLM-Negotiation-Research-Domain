@@ -4,7 +4,7 @@ All agent types inherit from this base class.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from src.core.Item import Item
 from src.utils.MessageParser import ParsedProposal
 
@@ -29,6 +29,8 @@ class BaseAgent(ABC):
         self.system_instructions_file = system_instructions_file
         self.current_items = []
         self.memory = []
+        self.domain_private_context = {}
+        self.domain_public_context = {}
         
     @abstractmethod
     async def generate_response(self) -> str:
@@ -58,7 +60,6 @@ class BaseAgent(ABC):
         """
         pass
     
-    @abstractmethod
     def set_items(self, items: List[Item]):
         """
         Set the items for this negotiation round.
@@ -66,9 +67,32 @@ class BaseAgent(ABC):
         Args:
             items: List of items with values for both agents
         """
-        pass
+        self.current_items = items
     
-    @abstractmethod
+    def set_domain_context(self, private_: Dict, public_: Dict):
+        """
+        Set the domain context for this negotiation round.
+        
+        Args:
+            private_: Private context for this agent
+            public_: Public context shared by all agents
+        """
+        self.domain_private_context = private_
+        self.domain_public_context = public_
+
+    def propose_action(self, state: Any) -> Any:
+        """
+        Produce a structured action for the given state. 
+        Only used in dataset mode (no LLM).
+        
+        Args:
+            state: The current state object (e.g. PriceState)
+            
+        Returns:
+            The proposed action object (e.g. PriceAction)
+        """
+        raise NotImplementedError("This agent does not support structured action proposal.")
+
     def get_agent_items_context(self) -> str:
         """
         Get the context string showing items and values for this agent.
@@ -76,7 +100,22 @@ class BaseAgent(ABC):
         Returns:
             str: Formatted string of items with this agent's values
         """
-        pass
+        # Legacy support for multi-item domain
+        if self.current_items:
+            agent_value_key = f"agent{self.agent_id}Value"
+            items_str = []
+            
+            for item in self.current_items:
+                value = getattr(item, agent_value_key)
+                items_str.append(f"{item.name}={value}")
+            
+            return ", ".join(items_str)
+            
+        # Generic domain context
+        if self.domain_private_context:
+            return str(self.domain_private_context)
+            
+        return ""
     
     def should_make_deterministic_proposal(self, turn_number: int = 1) -> bool:
         """

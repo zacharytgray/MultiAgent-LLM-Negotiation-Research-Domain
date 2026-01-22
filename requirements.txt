@@ -3,3 +3,10 @@ ollama
 langchain-ollama
 langchain
 pandas
+torch
+transformers
+peft
+tqdm
+matplotlib
+datasets
+accelerate

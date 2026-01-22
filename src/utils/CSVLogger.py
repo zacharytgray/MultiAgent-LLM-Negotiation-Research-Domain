@@ -38,6 +38,10 @@ class RawNegotiationLogEntry:
     # Fixed Price agent parameters (if applicable)
     fixed_price_threshold: Optional[float]
     
+    # Price Domain Agent parameter
+    price_fixed_margin: Optional[float]
+    price_boulware_beta: Optional[float]
+    
     # Round identification
     round_number: int
     total_rounds: int
@@ -62,6 +66,13 @@ class RawNegotiationLogEntry:
     # Negotiation dynamics
     proposal_history: str  # JSON: [(agent_num, proposal_data), ...]
     final_proposer: Optional[int]
+    
+    # Domain fields
+    domain_name: str = "multi_item"
+    domain_public_context: str = ""
+    agent1_private_context: str = ""
+    agent2_private_context: str = ""
+    outcome_details: str = ""
 
 class CSVLogger:
     """
@@ -104,7 +115,10 @@ class CSVLogger:
                         boulware_min_threshold: Optional[float] = None,
                         boulware_final_threshold: Optional[float] = None,
                         fixed_price_threshold: Optional[float] = None,
-                        reached_consensus: bool = True) -> RawNegotiationLogEntry:
+                        price_fixed_margin: Optional[float] = None,
+                        price_boulware_beta: Optional[float] = None,
+                        reached_consensus: bool = True,
+                        **kwargs) -> RawNegotiationLogEntry:
         """
         Create a raw log entry for a negotiation round without analysis metrics.
         """
@@ -119,31 +133,42 @@ class CSVLogger:
         ]
         
         # Get proposal statistics from allocation tracker
-        round_state = allocation_tracker.round_states.get(round_obj.round_number)
+        # Check if allocation_tracker has round_states (it might be None for simple domains depending on runner refactor)
         proposal_history = []
         final_proposer = None
         
-        if round_state and round_state.proposal_history:
-            # Store proposal history as structured data
-            proposal_history = [
-                {
-                    "agent_num": agent_num,
-                    "proposal": {
-                        "agent1_items": proposal.agent1_items,
-                        "agent2_items": proposal.agent2_items,
-                        "is_valid": proposal.is_valid,
-                        "error_message": proposal.error_message  # Changed from validation_message
+        if hasattr(allocation_tracker, "round_states"):
+            round_state = allocation_tracker.round_states.get(round_obj.round_number)
+            if round_state and round_state.proposal_history:
+                # Store proposal history as structured data
+                proposal_history = [
+                    {
+                        "agent_num": agent_num,
+                        "proposal": {
+                            "agent1_items": proposal.agent1_items,
+                            "agent2_items": proposal.agent2_items,
+                            "is_valid": proposal.is_valid,
+                            "error_message": getattr(proposal, "error_message", None)
+                        } if hasattr(proposal, "agent1_items") else str(proposal)
                     }
-                }
-                for agent_num, proposal in round_state.proposal_history
-            ]
-            
-            # Find final proposer
-            for agent_num, proposal in reversed(round_state.proposal_history):
-                if proposal.is_valid:
-                    final_proposer = agent_num
-                    break
-        
+                    for agent_num, proposal in round_state.proposal_history
+                ]
+                
+                # Find final proposer (logic for multi-item mostly)
+                for agent_num, proposal in reversed(round_state.proposal_history):
+                    if hasattr(proposal, "is_valid") and proposal.is_valid:
+                        final_proposer = agent_num
+                        break
+                # Override with kwargs if provided
+        if "proposal_history" in kwargs:
+             proposal_history = kwargs["proposal_history"]
+        # Extract domain fields from kwargs
+        domain_name = kwargs.get("domain_name", "multi_item")
+        domain_public_context = json.dumps(kwargs.get("domain_public_context", {}))
+        agent1_private_context = json.dumps(kwargs.get("agent1_private_context", {}))
+        agent2_private_context = json.dumps(kwargs.get("agent2_private_context", {}))
+        outcome_details = json.dumps(kwargs.get("outcome_details", {}))
+
         # Create the raw log entry
         entry = RawNegotiationLogEntry(
             # Session metadata
@@ -166,6 +191,10 @@ class CSVLogger:
             # Fixed Price agent parameters (if applicable)
             fixed_price_threshold=fixed_price_threshold,
             
+            # Price Domain Agent parameters
+            price_fixed_margin=price_fixed_margin,
+            price_boulware_beta=price_boulware_beta,
+            
             # Round identification
             round_number=round_obj.round_number,
             total_rounds=total_rounds,
@@ -183,7 +212,14 @@ class CSVLogger:
             final_allocation=json.dumps(final_allocation),
             conversation_history=json.dumps(round_obj.conversation_history),
             proposal_history=json.dumps(proposal_history),
-            final_proposer=final_proposer
+            final_proposer=final_proposer,
+
+            # Domain specific
+            domain_name=domain_name,
+            domain_public_context=domain_public_context,
+            agent1_private_context=agent1_private_context,
+            agent2_private_context=agent2_private_context,
+            outcome_details=outcome_details
         )
         
         return entry

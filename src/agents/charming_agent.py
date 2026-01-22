@@ -53,31 +53,3 @@ class CharmingAgent(BaseAgent):
         Reset the agent's memory to initial state.
         """
         self.ollama_agent.reset_memory()
-    
-    def set_items(self, items: List[Item]):
-        """
-        Set the items for this negotiation round.
-        
-        Args:
-            items: List of items with values for both agents
-        """
-        self.current_items = items
-    
-    def get_agent_items_context(self) -> str:
-        """
-        Get the context string showing items and values for this agent.
-        
-        Returns:
-            str: Formatted string of items with this agent's values
-        """
-        if not self.current_items:
-            return ""
-        
-        agent_value_key = f"agent{self.agent_id}Value"
-        items_str = []
-        
-        for item in self.current_items:
-            value = getattr(item, agent_value_key)
-            items_str.append(f"{item.name}={value}")
-        
-        return ", ".join(items_str)

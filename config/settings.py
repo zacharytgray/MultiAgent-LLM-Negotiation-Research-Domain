@@ -8,7 +8,7 @@ Centralizes all configurable parameters and constants.
 # =============================================================================
 
 # Default model settings
-DEFAULT_MODEL_NAME = "gpt-oss:20b"
+DEFAULT_MODEL_NAME = "qwen2:7b"
 MODEL_TEMPERATURE = 0.2
 RESPONSE_TIMEOUT = 60
 OLLAMA_BASE_URL = "http://localhost:11434"
@@ -16,6 +16,8 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 # Agent configuration
 SYSTEM_INSTRUCTIONS_FILE = "config/system_instructions.txt"
 DETERMINISTIC_AGENT_INSTRUCTIONS_FILE = "config/deterministic_agent_instructions.txt"
+PRICE_SYSTEM_INSTRUCTIONS_FILE = "config/price_system_instructions.txt"
+PRICE_DETERMINISTIC_INSTRUCTIONS_FILE = "config/price_determ_instructions.txt"
 CHARMING_AGENT_INSTRUCTIONS_FILE = "config/charming_agent_instructions.txt"
 RUDE_AGENT_INSTRUCTIONS_FILE = "config/rude_agent_instructions.txt"
 USE_TOOLS_BY_DEFAULT = False

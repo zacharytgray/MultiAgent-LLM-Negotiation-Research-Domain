@@ -10,6 +10,9 @@ from src.agents.boulware_agent import BoulwareAgent
 from src.agents.fixed_price_agent import FixedPriceAgent
 from src.agents.charming_agent import CharmingAgent
 from src.agents.rude_agent import RudeAgent
+from src.agents.price_boulware_agent import PriceBoulwareAgent
+from src.agents.price_strategy_agent import PriceStrategyWrapperAgent
+from src.agents.basic_price_agent import BasicPriceAgent
 from config.settings import BOULWARE_INITIAL_THRESHOLD, BOULWARE_MIN_THRESHOLD
 
 
@@ -25,6 +28,9 @@ class AgentFactory:
         "fixed_price": FixedPriceAgent,
         "charming": CharmingAgent,
         "rude": RudeAgent,
+        "price_boulware": PriceBoulwareAgent,
+        "price_strategy": PriceStrategyWrapperAgent,
+        "basic_price": BasicPriceAgent,
     }
     
     @classmethod
@@ -188,6 +194,10 @@ class AgentConfig:
             config = AgentConfig.charming_config()
         elif agent_type == "rude":
             config = AgentConfig.rude_config()
+        elif agent_type == "price_fixed":
+            config = {"fixed_margin": kwargs.get("fixed_margin", 10.0)}
+        elif agent_type == "price_boulware":
+            config = {"beta": kwargs.get("beta", 3.0)}
         else:
             config = {}
         
