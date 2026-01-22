@@ -366,9 +366,10 @@ def train():
         hyper_hidden=args.hyper_hidden
     )
     
-    # Move params to device if not auto (HyperNet might be on CPU initially if model was fully mapped)
-    # The injection kept them on same device as base layers, but let's Ensure
-    # Actually, model is mostly on GPU.
+    # Move model to device again to ensure new modules (HyperNet) are on correct device
+    # Especially if using accelerate or raw torch without 'device_map' fully handling dynamic modules
+    if not args.use_qlora:
+        model.to("cuda")
     
     # Optimizer
     trainable_params = [p for p in model.parameters() if p.requires_grad]

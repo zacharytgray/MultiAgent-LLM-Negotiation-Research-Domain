@@ -44,6 +44,12 @@ class RhoHyperNet(nn.Module):
         """
         # Ensure input is float32 for stability in the hypernet, usually
         x = rho.to(self.net[0].weight.dtype) 
+        
+        # FIX: Ensure x is on the same device as the network parameters
+        device = self.net[0].weight.device
+        if x.device != device:
+            x = x.to(device)
+            
         output = self.net(x)
         return self.final_act(output)
 
@@ -113,7 +119,8 @@ class HyperLoRALinear(nn.Module):
         if rho is None:
             return y_base
             
-        # Ensure rho is physically on the same device
+        # Ensure rho is physically on the same device as input (x)
+        # Check against x.device because self.lora_A might be on different device if pipeline parallel
         if rho.device != x.device:
             rho = rho.to(x.device)
             
