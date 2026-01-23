@@ -1013,47 +1013,48 @@ Present this proposal naturally as if you determined it through your own strateg
                         reached_consensus = True
                         final_allocation = {"price": outcome.get("agreement_price")}
 
-            if not reached_consensus and self.domain_type == "multi_item" and round_obj.items:
-                # No consensus reached - use fallback allocation
-                # Recompute fallback allocation using welfare-based ranking
-                items = round_obj.items
-                def all_possible_allocations(items):
-                    n = len(items)
-                    allocations = []
-                    for bits in range(2**n):
-                        a1, a2 = [], []
-                        for i in range(n):
-                            if (bits >> i) & 1:
-                                a1.append(items[i].name)
-                            else:
-                                a2.append(items[i].name)
-                        allocations.append({'agent1': a1, 'agent2': a2})
-                    return allocations
+            if not reached_consensus:
+                if self.domain_type == "multi_item" and round_obj.items:
+                    # No consensus reached - use fallback allocation
+                    # Recompute fallback allocation using welfare-based ranking
+                    items = round_obj.items
+                    def all_possible_allocations(items):
+                        n = len(items)
+                        allocations = []
+                        for bits in range(2**n):
+                            a1, a2 = [], []
+                            for i in range(n):
+                                if (bits >> i) & 1:
+                                    a1.append(items[i].name)
+                                else:
+                                    a2.append(items[i].name)
+                            allocations.append({'agent1': a1, 'agent2': a2})
+                        return allocations
 
-                def score_allocation_welfare(allocation, items):
-                    score = 0.0
-                    for item in items:
-                        if item.name in allocation['agent1']:
-                            score += item.agent1Value
-                        elif item.name in allocation['agent2']:
-                            score += item.agent2Value
-                    return score
+                    def score_allocation_welfare(allocation, items):
+                        score = 0.0
+                        for item in items:
+                            if item.name in allocation['agent1']:
+                                score += item.agent1Value
+                            elif item.name in allocation['agent2']:
+                                score += item.agent2Value
+                        return score
 
-                allAllocations = all_possible_allocations(items)
-                rankedAllocations = sorted(allAllocations, key=lambda alloc: score_allocation_welfare(alloc, items))
-                fallbackIndexPercent = 0.10
-                fallbackIndex = int(fallbackIndexPercent * len(rankedAllocations))
-                fallbackIndex = min(max(fallbackIndex, 0), len(rankedAllocations)-1)
-                fallbackAlloc = rankedAllocations[fallbackIndex]
-                final_allocation = fallbackAlloc
-                reached_consensus = False
-                final_proposer = None
-                round_obj.final_allocation = final_allocation
-                round_obj.final_proposer = final_proposer
-            else:
-                # Price domain impasse or other
-                reached_consensus = False
-                final_allocation = {}
+                    allAllocations = all_possible_allocations(items)
+                    rankedAllocations = sorted(allAllocations, key=lambda alloc: score_allocation_welfare(alloc, items))
+                    fallbackIndexPercent = 0.10
+                    fallbackIndex = int(fallbackIndexPercent * len(rankedAllocations))
+                    fallbackIndex = min(max(fallbackIndex, 0), len(rankedAllocations)-1)
+                    fallbackAlloc = rankedAllocations[fallbackIndex]
+                    final_allocation = fallbackAlloc
+                    reached_consensus = False
+                    final_proposer = None
+                    round_obj.final_allocation = final_allocation
+                    round_obj.final_proposer = final_proposer
+                else:
+                    # Price domain impasse or other
+                    reached_consensus = False
+                    final_allocation = {}
             
             # Prepare domain log fields
             # Helper to allow serialization of Item objects

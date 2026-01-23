@@ -331,7 +331,9 @@ def train():
     # Load Model
     logger.info("Loading Base Model...")
     
-    device_map = "auto"
+    # device_map="auto" can cause issues when modifying model structure (hooks incompatible with to(cuda))
+    # We will load to CPU first (by default), inject, then move to CUDA.
+    device_map = None 
     torch_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float32
     
     if args.use_qlora:
@@ -415,6 +417,11 @@ def train():
                 scheduler.step()
                 optimizer.zero_grad()
                 
+                # Check for NaNs
+                if torch.isnan(loss).any():
+                    logger.error(f"NaN loss detected at step {global_step}! Stopping.")
+                    return 
+
                 global_step += 1
                 progress_bar.update(1)
                 progress_bar.set_postfix(loss=loss.item() * args.grad_accum)

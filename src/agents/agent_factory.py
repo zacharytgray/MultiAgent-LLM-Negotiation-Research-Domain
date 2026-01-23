@@ -13,6 +13,7 @@ from src.agents.rude_agent import RudeAgent
 from src.agents.price_boulware_agent import PriceBoulwareAgent
 from src.agents.price_strategy_agent import PriceStrategyWrapperAgent
 from src.agents.basic_price_agent import BasicPriceAgent
+from src.agents.janus_agent import JanusAgent
 from config.settings import BOULWARE_INITIAL_THRESHOLD, BOULWARE_MIN_THRESHOLD
 
 
@@ -31,6 +32,7 @@ class AgentFactory:
         "price_boulware": PriceBoulwareAgent,
         "price_strategy": PriceStrategyWrapperAgent,
         "basic_price": BasicPriceAgent,
+        "janus": JanusAgent,
     }
     
     @classmethod
@@ -57,6 +59,22 @@ class AgentFactory:
             raise ValueError(f"Unknown agent type '{agent_type}'. Available types: {available_types}")
         
         agent_class = cls.AGENT_TYPES[agent_type]
+        
+        if agent_class == JanusAgent:
+            # Special handling for Janus Agent
+            role = "buyer" if agent_id == 1 else "seller"
+            
+            # Allow overriding model_path from config, else use session default
+            # Useful if session uses 'qwen2:7b' (Ollama) but Janus needs 'Qwen/Qwen2...' (HF)
+            hf_path = kwargs.get("model_path", model_name)
+            
+            return JanusAgent(
+                agent_id, role,
+                model_path=hf_path,
+                adapter_path=kwargs.get("adapter_path", "checkpoints/janus_v1/final"),
+                rho=kwargs.get("rho", 0.5)
+            )
+
         return agent_class(agent_id, model_name, system_instructions_file, **kwargs)
     
     @classmethod
