@@ -150,8 +150,22 @@ class HyperLoRALinear(nn.Module):
         if self.lora_A.device != x.device:
             self.lora_A.data = self.lora_A.data.to(x.device)
             self.lora_B.data = self.lora_B.data.to(x.device)
-            self.hyper_net.to(x.device)
 
+        # FIX: Ensure HyperNetwork is on the correct device independently of lora_A
+        # Check a parameter of hyper_net
+        if self.hyper_net.net[0].weight.device != x.device:
+             self.hyper_net.to(x.device)
+
+        # 3. Compute Gating Vector g(rho)
+        # HyperNet typically runs in float32 or same as parameters.
+        # Force rho to match hypernet params dtype
+        g = self.hyper_net(rho) # [Batch, rank]
+        
+        # 4. LoRA Path
+        # x: [Batch, Seq_Len, In] or [Batch, In]
+        # Cast input to LoRA weights dtype if needed
+        x_lora = x.to(self.lora_A.dtype)
+        
         # z = x @ A.T -> [Batch, ..., rank]
         z = F.linear(x_lora, self.lora_A) 
         
@@ -160,8 +174,8 @@ class HyperLoRALinear(nn.Module):
         # g is [Batch, Rank]
         # We need to broadcast g. If z is 3D, unsqueeze g at dim 1.
         
-        # Cast g to match z (bf16 likely)
-        g_casted = g.to(z.dtype)
+        # Cast g to match z (bf16 likely) AND force device match
+        g_casted = g.to(dtype=z.dtype, device=z.device)
         
         if z.dim() == 3:
             # [Batch, Seq, Rank] * [Batch, 1, Rank]
