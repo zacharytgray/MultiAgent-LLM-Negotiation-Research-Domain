@@ -444,6 +444,7 @@ def train():
     scheduler = get_linear_schedule_with_warmup(optimizer, args.warmup_steps, args.max_steps)
     
     global_step = 0
+    total_micro_steps = 0
     model.train()
     
     # Training Loop
@@ -458,8 +459,8 @@ def train():
             step_start_time = float(time.time()) if step_in_epoch < 5 else 0
             
             # Debug log for first few steps
-            if global_step == 0 and step_in_epoch < args.grad_accum * 2:
-                logger.info(f"Micro-step {step_in_epoch+1} (Accumulating for Global Step {global_step+1})...")
+            if global_step == 0 and total_micro_steps < args.grad_accum * 2:
+                logger.info(f"Micro-step {total_micro_steps+1} (Accumulating for Global Step {global_step+1})...")
 
             input_ids = batch['input_ids'].to(model.device)
             attention_mask = batch['attention_mask'].to(model.device)
@@ -518,7 +519,10 @@ def train():
             loss = loss / args.grad_accum
             loss.backward()
             
-            if (global_step + 1) % args.grad_accum == 0:
+            # Increment micro step info
+            total_micro_steps += 1
+            
+            if total_micro_steps % args.grad_accum == 0:
                 # Clip?
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
