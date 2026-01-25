@@ -1,201 +1,256 @@
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Callable, Optional, Dict, Union
+from typing import List, Callable, Optional, Dict, Union, Any
+import math
+import os
+import json
+
+class RhoContext:
+    """
+    Context object to hold the current rho (scalar control) state for the model.
+    This avoids global variables or fragile closures.
+    """
+    def __init__(self):
+        self.current_rho: Optional[torch.Tensor] = None
+
+class RhoEncoderFourier(nn.Module):
+    """
+    Encodes scalar rho using Fourier features + optional raw value.
+    
+    Output dimension = (1 if include_raw else 0) + 2 * num_frequencies
+    """
+    def __init__(self, num_frequencies: int = 8, include_raw: bool = True, scale: float = 1.0):
+        super().__init__()
+        self.num_frequencies = num_frequencies
+        self.include_raw = include_raw
+        self.scale = scale
+        self.out_dim = (1 if include_raw else 0) + 2 * num_frequencies
+        
+        # Precompute frequencies 2^k * pi * scale
+        # We store them as buffer so they move with device
+        frequencies = [math.pi * scale * (2**k) for k in range(num_frequencies)]
+        self.register_buffer("frequencies", torch.tensor(frequencies, dtype=torch.float32))
+
+    def forward(self, rho: torch.Tensor) -> torch.Tensor:
+        """
+        rho: [B, 1] float32
+        returns: [B, out_dim]
+        """
+        # Ensure rho is physically on the same device as frequencies
+        if rho.device != self.frequencies.device:
+            rho = rho.to(self.frequencies.device)
+
+        features = []
+        if self.include_raw:
+            features.append(rho)
+        
+        for freq in self.frequencies:
+            # rho * freq broadcast -> [B, 1]
+            arg = rho * freq
+            features.append(torch.sin(arg))
+            features.append(torch.cos(arg))
+            
+        return torch.cat(features, dim=-1)
 
 class RhoHyperNet(nn.Module):
     """
-    Hypernetwork that maps a scalar rho to a gating vector g of size [rank].
-    
-    Structure:
-      rho [B, 1] -> Linear(1, hidden) -> SiLU -> Linear(hidden, hidden) -> SiLU -> Linear(hidden, rank) -> Sigmoid
+    Hypernetwork: Embeds rho (optionally) -> MLP -> Gating vector g.
     """
-    def __init__(self, rank: int, hidden_dim: int = 64, activation: str = 'sigmoid'):
+    def __init__(
+        self, 
+        rank: int, 
+        input_dim: int = 1, # Changed from implicit 1 to explicit
+        hidden_dim: int = 64, 
+        gate_fn: str = 'sigmoid',
+        gate_clamp_min: Optional[float] = None,
+        gate_clamp_max: Optional[float] = None
+    ):
         super().__init__()
         self.rank = rank
-        self.hidden_dim = hidden_dim
+        self.input_dim = input_dim
+        self.gate_fn = gate_fn.lower()
+        self.gate_clamp_min = gate_clamp_min
+        self.gate_clamp_max = gate_clamp_max
         
         # MLP Layers
         self.net = nn.Sequential(
-            nn.Linear(1, hidden_dim),
+            nn.Linear(input_dim, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, rank)
         )
-        
-        if activation == 'sigmoid':
-            self.final_act = nn.Sigmoid()
-        elif activation == 'tanh':
-            self.final_act = nn.Tanh()
-        elif activation == 'softplus':
-            self.final_act = nn.Softplus()
-        else:
-            raise ValueError(f"Unsupported activation: {activation}")
             
-    def forward(self, rho: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            rho: Tensor of shape [Batch_Size, 1] (float32)
-        
+            x: Input embeddings [Batch_Size, input_dim]
         Returns:
-            g: Tensor of shape [Batch_Size, rank] (same dtype as rho usually, or cast later)
+            g: Gating values [Batch_Size, rank]
         """
-        # Ensure input is float32 for stability in the hypernet, usually
-        x = rho.to(self.net[0].weight.dtype) 
+        # Ensure x is on the same device/dtype as the network parameters
+        # Usually float32 is preferred for the hypernet MLP
+        target_dtype = self.net[0].weight.dtype
+        target_device = self.net[0].weight.device
         
-        # FIX: Ensure x is on the same device as the network parameters
-        device = self.net[0].weight.device
-        if x.device != device:
-            x = x.to(device)
+        x_in = x.to(dtype=target_dtype, device=target_device)
+        
+        logits = self.net(x_in)
+        
+        # Apply Gating Function
+        if self.gate_fn == 'sigmoid':
+            out = torch.sigmoid(logits)
+        elif self.gate_fn == 'tanh':
+            # Tanh is (-1, 1). If we want (0, 1), we rescale: (tanh + 1) / 2
+            # Or assume the user wants signed gates (rare for diagonal scaling but possible)
+            # Defaulting to standard tanh (-1, 1)
+            out = torch.tanh(logits)
+        elif self.gate_fn == 'tanh01':
+            out = (torch.tanh(logits) + 1.0) / 2.0
+        elif self.gate_fn == 'softplus':
+            out = F.softplus(logits)
+        elif self.gate_fn == 'identity':
+            out = logits
+        else:
+            raise ValueError(f"Unknown gate_fn: {self.gate_fn}")
             
-        output = self.net(x)
-        return self.final_act(output)
+        # Optional Clamping
+        if (self.gate_clamp_min is not None) or (self.gate_clamp_max is not None):
+            out = torch.clamp(out, min=self.gate_clamp_min, max=self.gate_clamp_max)
+            
+        return out
 
 class HyperLoRALinear(nn.Module):
     """
     Wraps a base nn.Linear layer with HyperLoRA adaptation.
-    
     W = W_base + (alpha/rank) * ( B @ diag(g(rho)) @ A )
+    
+    Refactored to usage RhoContext and support cleaner Injection.
     """
     def __init__(
         self, 
         base_layer: nn.Linear, 
         rank: int, 
         alpha: float, 
-        rho_getter: Callable[[], torch.Tensor],
-        hyper_hidden: int = 64,
+        rho_context: RhoContext,
+        rho_encoder: Optional[RhoEncoderFourier], 
+        hyper_net: RhoHyperNet,
         dropout_p: float = 0.05
     ):
         super().__init__()
-        self.base_layer = base_layer
+        self.base_layer = base_layer 
+        # Note: We do NOT register base_layer as a submodule to avoid saving its weights 
+        # in the adapter state dict, but we do need it accessible. 
+        # However, nn.Module logic will register it if we assign it to self.
+        # To avoid saving base weights, we can keep it, but careful with state_dicts.
+        # For simplicity in 'remove_hyperlora', we keep it.
+        
         self.rank = rank
         self.alpha = alpha
         self.scaling = alpha / rank
-        self.rho_getter = rho_getter
+        self.rho_context = rho_context
+        self.rho_encoder = rho_encoder
+        self.hyper_net = hyper_net
         
-        # Freeze base layer
+        # Freeze base layer (redundant if done globally, but safe)
         self.base_layer.requires_grad_(False)
-        for param in self.base_layer.parameters():
-            param.requires_grad = False
-            
+        
         in_features = base_layer.in_features
         out_features = base_layer.out_features
         
         # LoRA Matrices
-        # A: [rank, in_dim]
         self.lora_A = nn.Parameter(torch.empty(rank, in_features))
-        # B: [out_dim, rank]
         self.lora_B = nn.Parameter(torch.empty(out_features, rank))
-        
-        # HyperNetwork (Gating)
-        self.hyper_net = RhoHyperNet(rank, hidden_dim=hyper_hidden)
-        
         self.dropout = nn.Dropout(p=dropout_p)
         
-        # Initialize
         self.reset_parameters()
         
     def reset_parameters(self):
-        # A: Kaiming Uniform
         nn.init.kaiming_uniform_(self.lora_A, a=5**0.5)
-        # B: Zeros
         nn.init.zeros_(self.lora_B)
-        
-    def to(self, *args, **kwargs):
-        super().to(*args, **kwargs)
-        # Ensure our parameters are actually moved if using .to() manually
-        self.lora_A = self.lora_A.to(*args, **kwargs)
-        self.lora_B = self.lora_B.to(*args, **kwargs)
-        self.hyper_net = self.hyper_net.to(*args, **kwargs)
-        return self
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def compute_gate(self, rho: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass with injected HyperLoRA logic.
+        Computes the gate vector g for a given rho, without modifying state.
+        Useful for smoothness regularization.
         """
+        # 1. Encode
+        if self.rho_encoder is not None:
+             # Ensure encoder is on correct device
+            if self.rho_encoder.frequencies.device != rho.device:
+                self.rho_encoder.to(rho.device)
+            emb = self.rho_encoder(rho)
+        else:
+            emb = rho
+            
+        # 2. HyperNet
+        # Ensure hypernet matches needed device
+        target_device = self.hyper_net.net[0].weight.device
+        if emb.device != target_device:
+            emb = emb.to(target_device)
+            
+        g = self.hyper_net(emb)
+        return g
+
+    def forward(self, x: torch.Tensor, rho_override: Optional[torch.Tensor] = None) -> torch.Tensor:
         # 1. Base Output
-        # Base layer handles its own dtype. 
+        # Base layer handles its own dtype.
         y_base = self.base_layer(x)
         
-        # 2. Get Rho (Batch Context)
-        # Expected shape [Batch, 1]
-        rho = self.rho_getter()
+        # 2. Resolve Rho
+        rho = rho_override if rho_override is not None else self.rho_context.current_rho
         
-        # If rho is None or not set, fallback to base only (or raise error)
         if rho is None:
-            return y_base
+            raise RuntimeError("HyperLoRALinear: rho is None. Set model.rho_context.current_rho or pass rho_override.")
             
-        # Ensure rho is physically on the same device as input (x)
-        # Check against x.device because self.lora_A might be on different device if pipeline parallel
+        # 3. Compute Gate
+        # Ensure rho is on x device if possible, but hypernet might be elsewhere.
+        # Let compute_gate handle device logic for hypernet.
         if rho.device != x.device:
             rho = rho.to(x.device)
             
-        # 3. Compute Gating Vector g(rho)
-        # HyperNet typically runs in float32 or same as parameters.
-        # Force rho to match hypernet params dtype
-        g = self.hyper_net(rho) # [Batch, rank]
+        g = self.compute_gate(rho) # [Batch, rank]
         
         # 4. LoRA Path
-        # x: [Batch, Seq_Len, In] or [Batch, In]
-        input_dtype = x.dtype
-        
-        # Cast input to LoRA weights dtype if needed
+        # x: [Batch, Seq, In]
         x_lora = x.to(self.lora_A.dtype)
         
-        # FIX: Ensure lora_A/B are on the correct device.
-        # This can happen if the base model was loaded on GPU but new modules initialized on CPU
-        # and not properly caught by accelerate/model.to().
+        # Move params if needed (robustness)
         if self.lora_A.device != x.device:
             self.lora_A.data = self.lora_A.data.to(x.device)
             self.lora_B.data = self.lora_B.data.to(x.device)
 
-        # FIX: Ensure HyperNetwork is on the correct device independently of lora_A
-        # Check a parameter of hyper_net
-        if self.hyper_net.net[0].weight.device != x.device:
-             self.hyper_net.to(x.device)
-
-        # 3. Compute Gating Vector g(rho)
-        # HyperNet typically runs in float32 or same as parameters.
-        # Force rho to match hypernet params dtype
-        g = self.hyper_net(rho) # [Batch, rank]
+        z = F.linear(x_lora, self.lora_A) # [Batch, Seq, Rank]
         
-        # 4. LoRA Path
-        # x: [Batch, Seq_Len, In] or [Batch, In]
-        # Cast input to LoRA weights dtype if needed
-        x_lora = x.to(self.lora_A.dtype)
-        
-        # z = x @ A.T -> [Batch, ..., rank]
-        z = F.linear(x_lora, self.lora_A) 
-        
-        # Apply Gating
-        # z is [Batch, Seq, Rank] or [Batch, Rank]
-        # g is [Batch, Rank]
-        # We need to broadcast g. If z is 3D, unsqueeze g at dim 1.
-        
-        # Cast g to match z (bf16 likely) AND force device match
+        # Gate Broadcasting
         g_casted = g.to(dtype=z.dtype, device=z.device)
         
         if z.dim() == 3:
-            # [Batch, Seq, Rank] * [Batch, 1, Rank]
-            z_gated = z * g_casted.unsqueeze(1)
+            z_gated = z * g_casted.unsqueeze(1) # [B, 1, R]
         else:
-            # [Batch, Rank] * [Batch, Rank]
             z_gated = z * g_casted
             
-        # delta = z_gated @ B.T -> [Batch, ..., Out]
         delta = F.linear(z_gated, self.lora_B)
         
-        # 5. Combine
-        # cast delta back to output dtype of base (y0)
         output = y_base + (self.scaling * self.dropout(delta)).to(y_base.dtype)
-        
         return output
-
+        
     def extra_repr(self) -> str:
         return f"rank={self.rank}, alpha={self.alpha}"
 
+# --- Utilities ---
+
+def model_compute_all_gates(model: nn.Module, rho: torch.Tensor) -> List[torch.Tensor]:
+    """
+    Computes gates for all HyperLoRA layers in the model for a given rho.
+    Returns list of [Batch, Rank] tensors.
+    """
+    gates = []
+    for module in model.modules():
+        if isinstance(module, HyperLoRALinear):
+            gates.append(module.compute_gate(rho))
+    return gates
 
 def inject_hyperlora(
     model: nn.Module, 
@@ -203,62 +258,97 @@ def inject_hyperlora(
     rank: int = 16, 
     alpha: float = 32.0, 
     dropout: float = 0.05, 
-    hyper_hidden: int = 64
-):
-    """
-    Injects HyperLoRALinear layers into the model in-place.
+    hyper_hidden: int = 64,
+    # New Configs
+    use_fourier: bool = True,
+    fourier_freqs: int = 8,
+    include_raw: bool = True,
+    fourier_scale: float = 1.0,
+    gate_fn: str = "sigmoid",
+    gate_clamp_min: float = None,
+    gate_clamp_max: float = None
+) -> nn.Module:
     
-    Args:
-        model: Example: Qwen2ForCausalLM
-        target_module_names: Suffixes of modules to replace (e.g. "q_proj")
-        rank, alpha, dropout: LoRA params
-    """
+    # 1. Setup Rho Context
+    if not hasattr(model, "rho_context"):
+        model.rho_context = RhoContext()
     
-    # 1. Setup Global Rho Context on Model
-    # We attach an attribute to the model to store the current rho batch.
-    # Initialized to None.
-    if not hasattr(model, "current_rho"):
-        model.current_rho = None
+    # 2. Setup Encoder (Shared or per module? Shared is better for params but needs to be accessible)
+    # We will create one encoder instance. If we want it trainable, it should be registered.
+    # We'll attach it to the model for saving convenience.
+    
+    if use_fourier:
+        rho_encoder = RhoEncoderFourier(num_frequencies=fourier_freqs, include_raw=include_raw, scale=fourier_scale)
+        input_dim = rho_encoder.out_dim
+    else:
+        rho_encoder = None
+        input_dim = 1
         
-    # Create the getter closure. 
-    # Note: We bind 'model' from this scope.
-    rho_getter = lambda: model.current_rho
+    # We attach these to model to persist them easily in standard save/load if not careful,
+    # but strictly we should manage them in the save/load function.
+    model.rho_encoder_module = rho_encoder 
     
-    # 2. Traverse and Replace
-    # We collect targets first to avoid modifying OrderedDict while iterating
+    # Store config
+    model._hyperlora_config = {
+        "adapter_version": "v2",
+        "target_module_names": target_module_names,
+        "rank": rank,
+        "alpha": alpha,
+        "dropout": dropout,
+        "hyper_hidden": hyper_hidden,
+        "use_fourier": use_fourier,
+        "fourier_freqs": fourier_freqs,
+        "include_raw": include_raw,
+        "fourier_scale": fourier_scale,
+        "gate_fn": gate_fn,
+        "gate_clamp_min": gate_clamp_min,
+        "gate_clamp_max": gate_clamp_max
+    }
+    model._hyperlora_injected = True
+    
+    # 3. Injection Loop
     modules_to_replace = []
-    
     for name, module in model.named_modules():
-        # check if it matches target suffixes and is a Linear layer
         if isinstance(module, nn.Linear):
-            # Check suffix
-            # e.g. "model.layers.0.self_attn.q_proj" ends with "q_proj"
             if any(name.endswith(target) for target in target_module_names):
                 modules_to_replace.append(name)
                 
-    print(f"Found {len(modules_to_replace)} modules to replace with HyperLoRA.")
+    print(f"Injecting HyperLoRA into {len(modules_to_replace)} modules...")
     
     for name in modules_to_replace:
-        # Get the module and its parent
-        parent_name, child_name = name.rsplit('.', 1)
-        parent = model.get_submodule(parent_name)
+        if '.' in name:
+            parent_name, child_name = name.rsplit('.', 1)
+            parent = model.get_submodule(parent_name)
+        else:
+            parent_name = ""
+            child_name = name
+            parent = model
+            
         target_linear = getattr(parent, child_name)
         
-        # Create Wrapper
+        # Create unique HyperNet per layer (since they learn layer-specific policy mappings)
+        hyper_net = RhoHyperNet(
+            rank=rank, 
+            input_dim=input_dim, 
+            hidden_dim=hyper_hidden, 
+            gate_fn=gate_fn,
+            gate_clamp_min=gate_clamp_min,
+            gate_clamp_max=gate_clamp_max
+        )
+        
         new_module = HyperLoRALinear(
             base_layer=target_linear,
             rank=rank,
             alpha=alpha,
-            rho_getter=rho_getter,
-            hyper_hidden=hyper_hidden,
+            rho_context=model.rho_context,
+            rho_encoder=model.rho_encoder_module, # Shared encoder
+            hyper_net=hyper_net,
             dropout_p=dropout
         )
         
-        # Replace
         setattr(parent, child_name, new_module)
         
-    # 3. Freeze & Verify
-    # Freeze all parameters that are NOT LoRA or HyperNet
+    # 4. Freeze Base, Unfreeze Adapter
     for n, p in model.named_parameters():
         if "lora_" in n or "hyper_net" in n:
             p.requires_grad = True
@@ -267,121 +357,118 @@ def inject_hyperlora(
             
     return model
 
-def count_trainable_params(model: nn.Module):
-    trainable_params = 0
-    all_param = 0
-    for _, param in model.named_parameters():
-        all_param += param.numel()
-        if param.requires_grad:
-            trainable_params += param.numel()
+def save_hyperlora_adapter(model: nn.Module, output_dir: str):
+    """
+    Saves adapter state dict and config.
+    """
+    os.makedirs(output_dir, exist_ok=True)
     
-    print(
-        f"trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}"
-    )
-    return trainable_params
-
-# --- Minimal Test Script ---
-
-if __name__ == "__main__":
-    import sys
-    
-    print("--- Running HyperLoRA Sanity Check ---")
-    
-    # Try loading a small model or creating a dummy config
-    try:
-        from transformers import AutoModelForCausalLM, AutoConfig
-        
-        # Create a dummy Qwen2 config to avoid needing actual weights for this test
-        # Qwen2-7B config approx:
-        config = AutoConfig.from_pretrained("Qwen/Qwen2-7B", trust_remote_code=True)
-        # Use tiny config for speed
-        config.num_hidden_layers = 2
-        config.hidden_size = 64
-        config.intermediate_size = 256
-        config.num_attention_heads = 4
-        config.num_key_value_heads = 4
-        
-        print("Creating dummy Qwen2 model...")
-        model = AutoModelForCausalLM.from_config(config)
-        
-    except Exception as e:
-        print(f"Could not load Transformers/QwenConfig: {e}")
-        # Construct a simple barebones nn.Module to simulate structure
-        class DummyModel(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.q_proj = nn.Linear(32, 32)
-                self.v_proj = nn.Linear(32, 32)
-                self.fc = nn.Linear(32, 10) # Should NOT be replaced
-        model = DummyModel()
-        print("Created simple dummy model.")
-        
-    # Inject
-    print("Injecting HyperLoRA...")
-    inject_hyperlora(
-        model, 
-        target_module_names=["q_proj", "output_proj", "v_proj", "gate_proj", "up_proj", "down_proj"], 
-        rank=8, 
-        alpha=16
-    )
-    
-    count_trainable_params(model)
-    
-    # Test Forward with Rho
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Testing on device: {device}")
-    model.to(device)
-    
-    batch_size = 2
-    seq_len = 5
-    hidden_dim = getattr(model.config, "hidden_size", 32)
-    
-    # Dummy Inputs
-    input_ids = torch.randint(0, 1000, (batch_size, seq_len)).to(device)
-    
-    # Set Rho
-    # Shape [B, 1]
-    rho_val = torch.tensor([[0.0], [1.0]], device=device, dtype=torch.float32)
-    model.current_rho = rho_val
-    
-    # Forward 1
-    print("Running Forward Pass 1 (rho=[0, 1])...")
-    with torch.no_grad():
-        res1 = model(input_ids)
-        out1 = res1.logits if hasattr(res1, 'logits') else res1
-        
-    # Perturb LoRA A/B manually to ensure they do something (since B init is zero)
-    # We want to trace if rho changes result.
-    # Currently B=0, so LoRA contribution is 0. Changing rho won't change output yet.
-    # Let's set some random weights in LoRA B
-    print("Perturbing LoRA B weights to verify gating...")
-    for n, m in model.named_modules():
-        if isinstance(m, HyperLoRALinear):
-            nn.init.normal_(m.lora_B, std=0.1)
+    # Collect state dict
+    state_dict = {}
+    for n, p in model.named_parameters():
+        if "lora_" in n or "hyper_net" in n:
+            state_dict[n] = p.cpu()
             
-    # Forward 2 (Same rho)
-    print("Running Forward Pass 2 (Post-Perturb, rho=[0, 1])...")
-    with torch.no_grad():
-        res2 = model(input_ids)
-        out2 = res2.logits if hasattr(res2, 'logits') else res2
+    # Save weights
+    torch.save(state_dict, os.path.join(output_dir, "adapter_state.pt"))
+    
+    # Save config
+    if hasattr(model, "_hyperlora_config"):
+        config = model._hyperlora_config
+    else:
+        config = {"version": "unknown"}
         
-    # Forward 3 (Different rho)
-    model.current_rho = torch.tensor([[-1.0], [0.5]], device=device, dtype=torch.float32)
-    print("Running Forward Pass 3 (rho=[-1, 0.5])...")
-    with torch.no_grad():
-        res3 = model(input_ids)
-        out3 = res3.logits if hasattr(res3, 'logits') else res3
+    with open(os.path.join(output_dir, "adapter_config.json"), 'w') as f:
+        json.dump(config, f, indent=2)
         
-    # Checks
-    print("\n--- Results ---")
+    print(f"Saved HyperLoRA adapter to {output_dir}")
+
+def load_hyperlora_adapter(model: nn.Module, adapter_path: str):
+    """
+    Loads adapter Config and Weights. Checks version.
+    Expects model to NOT be injected yet, or cleanly re-injects.
+    """
+    config_path = os.path.join(adapter_path, "adapter_config.json")
+    weights_path = os.path.join(adapter_path, "adapter_state.pt")
     
-    # 1. Did B=0 vs B!=0 change anything? (Yes it should)
-    diff_init = (out2 - out1).abs().mean().item()
-    print(f"Difference after initializing B (should be > 0): {diff_init:.6f}")
+    if not os.path.exists(config_path):
+        raise ValueError(f"No config found at {config_path}")
+        
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+        
+    version = config.get("adapter_version", "v1")
     
-    # 2. Does changing Rho change output?
-    diff_rho = (out3 - out2).abs().mean().item()
-    print(f"Difference after changing Rho (should be > 0): {diff_rho:.6f}")
-    
-    print("HyperLoRA Module Test Complete.")
+    # Re-inject based on loaded config
+    if version == "v2":
+        inject_hyperlora(
+            model,
+            target_module_names=config.get("target_module_names", []),
+            rank=config.get("rank", 16),
+            alpha=config.get("alpha", 32.0),
+            dropout=config.get("dropout", 0.05),
+            hyper_hidden=config.get("hyper_hidden", 64),
+            use_fourier=config.get("use_fourier", True),
+            fourier_freqs=config.get("fourier_freqs", 8),
+            include_raw=config.get("include_raw", True),
+            fourier_scale=config.get("fourier_scale", 1.0),
+            gate_fn=config.get("gate_fn", "sigmoid"),
+            gate_clamp_min=config.get("gate_clamp_min", None),
+            gate_clamp_max=config.get("gate_clamp_max", None)
+        )
+    else:
+        # Compatibility Mode
+        print("Detected v1 or unknown adapter. Attempting compatibility injection...")
+        # V1 logic usually had 1-dim input.
+        inject_hyperlora(
+            model,
+            rank=config.get("rank", 16),
+            alpha=config.get("alpha", 32.0),
+            use_fourier=False, # Force raw
+            include_raw=True
+        )
+        
+    # Load Weights
+    state_dict = torch.load(weights_path, map_location="cpu")
+    # Handling key mismatches?
+    # v2 code keys are likely compatible if module names didn't change.
+    keys = model.load_state_dict(state_dict, strict=False)
+    print(f"Loaded adapter weights. Missing keys: {len(keys.missing_keys)}, Unexpected keys: {len(keys.unexpected_keys)}")
+
+def remove_hyperlora(model: nn.Module):
+    """
+    Restores original Linear layers.
+    """
+    for name, module in model.named_modules():
+        if isinstance(module, HyperLoRALinear):
+            if '.' in name:
+                parent_name, child_name = name.rsplit('.', 1)
+                parent = model.get_submodule(parent_name)
+            else:
+                child_name = name
+                parent = model
+                
+            # Restore base
+            # Note: base_layer is froze, we should unfreeze?
+            # User might want to continue training base.
+            module.base_layer.requires_grad_(True) 
+            setattr(parent, child_name, module.base_layer)
+            
+    if hasattr(model, "rho_context"):
+        del model.rho_context
+    if hasattr(model, "_hyperlora_injected"):
+        del model._hyperlora_injected
+    print("HyperLoRA modules removed.")
+
+def list_injected_modules(model: nn.Module) -> List[Dict]:
+    info = []
+    for name, module in model.named_modules():
+        if isinstance(module, HyperLoRALinear):
+            info.append({
+                "name": name,
+                "in_features": module.base_layer.in_features,
+                "out_features": module.base_layer.out_features,
+                "rank": module.rank
+            })
+    return info
 

@@ -1,10 +1,11 @@
-
 import os
 import sys
 import argparse
 import random
 import json
 import logging
+import math
+import re
 from typing import List, Dict, Any, Tuple, Optional
 
 import torch
@@ -21,16 +22,24 @@ from transformers import (
 from tqdm import tqdm
 
 # Ensure we can import from the sibling module
-# Assuming structure: src/training/train_janus_hyperlora.py
-# We add the parent directory of 'src' to path if running from root, or relative import if package
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 try:
-    from src.training.hyper_lora import inject_hyperlora, HyperLoRALinear
+    from src.training.hyper_lora import (
+        inject_hyperlora, 
+        HyperLoRALinear, 
+        save_hyperlora_adapter, 
+        model_compute_all_gates
+    )
 except ImportError:
     print("Could not import hyper_lora directly. Trying local import...")
     import hyper_lora
-    from hyper_lora import inject_hyperlora, HyperLoRALinear
+    from hyper_lora import (
+        inject_hyperlora, 
+        HyperLoRALinear, 
+        save_hyperlora_adapter,
+        model_compute_all_gates
+    )
 
 # Setup Logging
 logging.basicConfig(
@@ -49,7 +58,7 @@ SPECIAL_TOKENS = [
 ]
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train HyperLoRA Janus Negotiation Agent")
+    parser = argparse.ArgumentParser(description="Train HyperLoRA Janus Negotiation Agent (v2)")
     
     # Model & Data
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen2-7B", help="HF Model ID")
@@ -74,25 +83,43 @@ def parse_args():
     parser.add_argument("--dropout", type=float, default=0.05)
     parser.add_argument("--hyper_hidden", type=int, default=64)
     
-    # Eval / Saving
+    # v2 Upgrades: Fourier Rho Encoder
+    parser.add_argument("--rho_encoder", type=str, default="fourier", choices=["fourier", "raw"], help="Type of rho encoding")
+    parser.add_argument("--rho_num_frequencies", type=int, default=8, help="Number of Fourier frequencies")
+    parser.add_argument("--rho_include_raw", type=str, default="true", help="Include raw scalar in embedding?")
+    parser.add_argument("--rho_scale", type=float, default=1.0, help="Scaling factor for Fourier frequencies")
+    
+    # v2 Upgrades: Gating
+    parser.add_argument("--gate_fn", type=str, default="sigmoid", choices=["sigmoid", "tanh", "tanh01", "softplus", "identity"])
+    parser.add_argument("--gate_clamp_min", type=float, default=None)
+    parser.add_argument("--gate_clamp_max", type=float, default=None)
+    
+    # v2 Upgrades: Smoothness Regularization
+    parser.add_argument("--lambda_smooth", type=float, default=0.0, help="Coefficient for smoothness regularization")
+    parser.add_argument("--smooth_eps", type=float, default=0.02, help="Epsilon for numeric derivative approximation")
+    parser.add_argument("--smooth_clamp_min", type=float, default=-1.0, help="Min bound for rho perturbation")
+    parser.add_argument("--smooth_clamp_max", type=float, default=1.0, help="Max bound for rho perturbation")
+
+    # Eval
     parser.add_argument("--save_every", type=int, default=1000)
     parser.add_argument("--eval_every", type=int, default=1000)
+    parser.add_argument("--eval_num_samples", type=int, default=128, help="Number of samples to eval generation on")
+    parser.add_argument("--eval_generate", action="store_true", help="Enable generation-based eval (slow)")
     
     args = parser.parse_args()
     
-    # Convert string bool
-    if args.include_failures.lower() == "false":
-        args.include_failures = False
-    else:
-        args.include_failures = True
-        
+    # Boolean conversions
+    args.include_failures = (args.include_failures.lower() == "true")
+    args.rho_include_raw = (args.rho_include_raw.lower() == "true")
+    
     return args
 
 def normalize_price(val: float, low: float, high: float) -> float:
-    """Normalize price to [0, 1] given range."""
+    """Normalize price to [0, 1] given range. Robust to zero range."""
     rng = high - low
     if rng < 1e-6:
-        rng = 1.0
+        # If range is zero, return 0. (Or 0.5? 0 implies low, which is also high)
+        return 0.0
     return (val - low) / rng
 
 class NegotiationDataset(Dataset):
@@ -101,7 +128,6 @@ class NegotiationDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.k_history = k_history
-        self.debug_count = 0
         
     def __len__(self):
         return len(self.data)
@@ -118,6 +144,9 @@ class NegotiationDataset(Dataset):
         
         p_low = float(row['price_low']) if not pd.isna(row['price_low']) else 0.0
         p_high = float(row['price_high']) if not pd.isna(row['price_high']) else 2000.0
+        
+        # Use simple validation for p_low/p_high
+        if p_high < p_low: p_high = p_low + 1.0 # fix inversion
         
         # Norms
         res_price = float(row['reservation_price']) if not pd.isna(row['reservation_price']) else p_low
@@ -174,49 +203,41 @@ class NegotiationDataset(Dataset):
             f"<INSTRUCTION> Output exactly one of:\n"
             f"ACCEPT\n"
             f"OFFER <PRICE_NORM>\n"
-            f"<OUTPUT>\n"
+            f"<OUTPUT> " # Include trailing space?
         )
+        
+        # Add a trailing newline to separate strictly
+        prompt = prompt.strip() + "\n"
         
         full_text = prompt + target_str + self.tokenizer.eos_token
         
         # 3. Tokenize
-        # We need to mask the prompt. 
-        # Strategy: Tokenize prompt, get len. Tokenize full, get len. Labels[:prompt_len] = -100.
-        
-        # For truncation, we ideally truncate history, but standard truncation chops from end.
-        # This is a risk. With max_length 1024, it should be fine for K=8. 
-        
         input_enc = self.tokenizer(full_text, truncation=True, max_length=self.max_length, return_tensors="pt")
         input_ids = input_enc.input_ids[0]
         attention_mask = input_enc.attention_mask[0]
         
-        # Create Labels
         labels = input_ids.clone()
         
-        # Determine prompt boundary
-        # We iterate to find where the prompt ends. Or just tokenize prompt separately.
-        prompt_enc = self.tokenizer(prompt, add_special_tokens=False, return_tensors="pt")
+        # Determine prompt boundary to mask labels
+        # Tokenize prompt alone. Add BOS if model uses it by default.
+        prompt_enc = self.tokenizer(prompt, add_special_tokens=True, truncation=True, max_length=self.max_length, return_tensors="pt")
         prompt_len = prompt_enc.input_ids.shape[1]
         
-        # The full_text tokenization might include a BOS token which prompt_enc might not if not handled carefully
-        # But usually AutoTokenizer handles BOS logic similarly for both.
-        # Let's verify lengths.
-        
+        # If prompt_enc has one less token (maybe EOS?), just be careful. 
+        # Usually prompt_len covers the prompt.
         if prompt_len < len(labels):
             labels[:prompt_len] = -100
         else:
-            # Fallback if prompt was truncated or something weird match
-            # Mask everything except last few tokens? Dangerous.
-            # Just mask first 3/4 if unsure? 
-            # Better safe: re-check overlaps.
-            labels[:] = -100 # Ignore this bad sample
+            # If prompt truncates, the whole sample is prompt. Mask all.
+            labels[:] = -100
             
-        # 4. Return
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "labels": labels,
-            "rho": torch.tensor([rho], dtype=torch.float32) # [1]
+            "rho": torch.tensor([rho], dtype=torch.float32),
+            "prompt_text": prompt, # For eval generation
+            "target_text": target_str
         }
 
 class HyperLoRACollator:
@@ -224,228 +245,282 @@ class HyperLoRACollator:
         self.pad_token_id = pad_token_id
         
     def __call__(self, batch):
-        # batch is list of dicts
-        
         input_ids = [x['input_ids'] for x in batch]
         attention_mask = [x['attention_mask'] for x in batch]
         labels = [x['labels'] for x in batch]
         rhos = [x['rho'] for x in batch]
         
-        # Pad
         input_ids_padded = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id)
         attention_mask_padded = torch.nn.utils.rnn.pad_sequence(attention_mask, batch_first=True, padding_value=0)
         labels_padded = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
         
-        # Stack Rhos [B, 1]
         rhos_tensor = torch.stack(rhos) 
         
         return {
             "input_ids": input_ids_padded,
             "attention_mask": attention_mask_padded,
             "labels": labels_padded,
-            "rho": rhos_tensor
+            "rho": rhos_tensor,
+            "raw_batch": batch # pass through for eval text access
         }
 
-def save_hyperlora_adapter(model, output_dir, tokenizer, args):
-    """Save only the trainable HyperLoRA parameters."""
-    os.makedirs(output_dir, exist_ok=True)
+def run_restricted_eval(model, tokenizer, loader, num_samples=32, device="cuda"):
+    """
+    Runs generation on a subset of data and computes strict accuracy/MSE.
+    """
+    model.eval()
+    samples_count = 0
+    correct_accept = 0
+    offer_mse_sum = 0.0
+    offer_count = 0
+    total_correct_action = 0
     
-    # 1. State Dict
-    to_save = {}
-    for n, p in model.named_parameters():
-        if p.requires_grad:
-            to_save[n] = p.cpu()
+    print(f"Running Eval Generation on {num_samples} samples...")
+    
+    with torch.no_grad():
+        for batch in loader:
+            if samples_count >= num_samples: break
             
-    torch.save(to_save, os.path.join(output_dir, "adapter_state.pt"))
+            # Use raw prompts
+            raw_items = batch["raw_batch"]
+            curr_bs = len(raw_items)
+            
+            # Prepare inputs for generation
+            prompts = [item["prompt_text"] for item in raw_items]
+            targets = [item["target_text"] for item in raw_items]
+            rhos = batch["rho"].to(device)
+            
+            # Tokenize prompts only
+            inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(device)
+            
+            # Set context
+            model.rho_context.current_rho = rhos
+            
+            # Generate
+            gen_out = model.generate(
+                **inputs, 
+                max_new_tokens=16, 
+                do_sample=False, 
+                pad_token_id=tokenizer.pad_token_id
+            )
+            
+            # Decode
+            # Slice off input
+            input_len = inputs.input_ids.shape[1]
+            generated_tokens = gen_out[:, input_len:]
+            decoded = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+            
+            for pred_str, true_str in zip(decoded, targets):
+                samples_count += 1
+                pred_clean = pred_str.strip()
+                true_clean = true_str.strip()
+                
+                # Check Action
+                pred_action = "ACCEPT" if "ACCEPT" in pred_clean else "OFFER"
+                true_action = "ACCEPT" if "ACCEPT" in true_clean else "OFFER"
+                
+                if pred_action == true_action:
+                    total_correct_action += 1
+                    
+                # Check Price Logic
+                if true_action == "OFFER" and pred_action == "OFFER":
+                    # Extract floats
+                    try:
+                        # Regex for float
+                        p_vals = re.findall(r"[-+]?\d*\.\d+|\d+", pred_clean)
+                        t_vals = re.findall(r"[-+]?\d*\.\d+|\d+", true_clean)
+                        if p_vals and t_vals:
+                            p_val = float(p_vals[0])
+                            t_val = float(t_vals[0])
+                            offer_mse_sum += (p_val - t_val) ** 2
+                            offer_count += 1
+                    except:
+                        pass
+                
+            if samples_count >= num_samples: break
+            
+    acc = total_correct_action / max(1, samples_count)
+    mse = offer_mse_sum / max(1, offer_count)
     
-    # 2. Config
-    config = {
-        "rank": args.rank,
-        "alpha": args.alpha,
-        "dropout": args.dropout,
-        "hyper_hidden": args.hyper_hidden,
-        "base_model": args.model_name,
-        "augmented_tokens": SPECIAL_TOKENS
-    }
-    with open(os.path.join(output_dir, "adapter_config.json"), 'w') as f:
-        json.dump(config, f, indent=2)
-        
-    # 3. Tokenizer
-    tokenizer.save_pretrained(output_dir)
-    logger.info(f"Saved adapter to {output_dir}")
+    print(f"Eval Result: Action Acc={acc:.4f} | Offer MSE={mse:.6f} | Samples={samples_count}")
+    return {"acc": acc, "mse": mse}
 
 def train():
     args = parse_args()
     
-    set_seed(args.seed)
+    # Set Seed
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     
+    # Load Data
     logger.info(f"Loading data from {args.decision_steps_path}...")
     df = pd.read_parquet(args.decision_steps_path)
     logger.info(f"Loaded {len(df)} rows.")
     
-    # Filtering
     if not args.include_failures:
         logger.info("Excluding failures (rho == -1.0)...")
         df = df[df['rho_train'] != -1.0]
-        logger.info(f"Filtered to {len(df)} rows.")
-        
-    # Stats
-    success_df = df[df['rho_train'] != -1.0]
-    if not success_df.empty:
-        rhos = success_df['rho_train']
-        logger.info(f"Success Rho Stats: Min={rhos.min():.4f}, Max={rhos.max():.4f}, Mean={rhos.mean():.4f}")
     
-    logger.info(f"Failures count: {len(df[df['rho_train'] == -1.0])}")
-
-    # Split Eval
-    # Simple random split 1%
+    # Simple Split
     shuffled = df.sample(frac=1.0, random_state=args.seed).reset_index(drop=True)
-    eval_size = int(len(shuffled) * 0.01)
-    if eval_size < 1: eval_size = 0
+    eval_len = int(len(shuffled) * 0.02)
+    eval_len = max(eval_len, min(len(shuffled), 32)) # Ensure at least some eval if possible
     
-    train_df = shuffled.iloc[eval_size:]
-    eval_df = shuffled.iloc[:eval_size]
+    train_df = shuffled.iloc[eval_len:]
+    eval_df = shuffled.iloc[:eval_len]
     
     logger.info(f"Train size: {len(train_df)}, Eval size: {len(eval_df)}")
     
-    # Load Tokenizer
-    logger.info(f"Loading tokenizer: {args.model_name}")
+    # Tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
-    
-    # Add tokens
-    num_added = tokenizer.add_special_tokens({"additional_special_tokens": SPECIAL_TOKENS})
+    tokenizer.add_special_tokens({"additional_special_tokens": SPECIAL_TOKENS})
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         
-    logger.info(f"Added {num_added} special tokens.")
-    
-    # Dataset & Loader
+    # Dataset
     train_dataset = NegotiationDataset(train_df, tokenizer, args.max_length, args.k_history)
     eval_dataset = NegotiationDataset(eval_df, tokenizer, args.max_length, args.k_history)
     
     collator = HyperLoRACollator(tokenizer.pad_token_id)
     
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collator, num_workers=0) # workers=0 for simplicity
-    eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collator) if eval_size > 0 else None
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collator)
+    eval_loader_gen = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collator)
     
-    # Load Model
+    # Model
     logger.info("Loading Base Model...")
-    
-    # device_map="auto" can cause issues when modifying model structure (hooks incompatible with to(cuda))
-    # We will load to CPU first (by default), inject, then move to CUDA.
-    device_map = None 
     torch_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float32
-    
+    print(f"Using dtype: {torch_dtype}")
+
     if args.use_qlora:
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=torch_dtype,
         )
-        model = AutoModelForCausalLM.from_pretrained(
-            args.model_name, 
-            quantization_config=bnb_config,
-            device_map=device_map,
-            trust_remote_code=True
-        )
+        model = AutoModelForCausalLM.from_pretrained(args.model_name, quantization_config=bnb_config, trust_remote_code=True)
     else:
-        model = AutoModelForCausalLM.from_pretrained(
-            args.model_name,
-            torch_dtype=torch_dtype,
-            device_map=device_map,
-            trust_remote_code=True
-        )
+        model = AutoModelForCausalLM.from_pretrained(args.model_name, torch_dtype=torch_dtype, trust_remote_code=True)
         
     model.resize_token_embeddings(len(tokenizer))
     
-    # Inject HyperLoRA
-    logger.info("Injecting HyperLoRA Modules...")
+    # Inject
+    logger.info("Injecting HyperLoRA V2...")
     model = inject_hyperlora(
-        model, 
-        rank=args.rank, 
-        alpha=args.alpha, 
-        dropout=args.dropout, 
-        hyper_hidden=args.hyper_hidden
+        model,
+        rank=args.rank,
+        alpha=args.alpha,
+        dropout=args.dropout,
+        hyper_hidden=args.hyper_hidden,
+        use_fourier=(args.rho_encoder == "fourier"),
+        fourier_freqs=args.rho_num_frequencies,
+        include_raw=args.rho_include_raw,
+        fourier_scale=args.rho_scale,
+        gate_fn=args.gate_fn,
+        gate_clamp_min=args.gate_clamp_min,
+        gate_clamp_max=args.gate_clamp_max
     )
     
-    # Move model to device again to ensure new modules (HyperNet) are on correct device
-    # Especially if using accelerate or raw torch without 'device_map' fully handling dynamic modules
     if not args.use_qlora:
-        model.to("cuda")
+        model.to("cuda" if torch.cuda.is_available() else "cpu")
+        
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
+    scheduler = get_linear_schedule_with_warmup(optimizer, args.warmup_steps, args.max_steps)
     
-    # Optimizer
-    trainable_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(trainable_params, lr=args.lr)
-    
-    num_training_steps = args.max_steps
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=num_training_steps
-    )
-    
-    # Training Loop
-    logger.info("Starting Training...")
     global_step = 0
     model.train()
     
-    progress_bar = tqdm(total=num_training_steps, desc="Training")
+    # Training Loop
+    pbar = tqdm(total=args.max_steps, desc="Training")
     
-    epoch = 0
-    best_loss = float('inf')
-    
-    while global_step < num_training_steps:
-        epoch += 1
-        for step, batch in enumerate(train_loader):
-            # Move batch to device
+    max_steps_reached = False
+    while not max_steps_reached:
+        for batch in train_loader:
             input_ids = batch['input_ids'].to(model.device)
             attention_mask = batch['attention_mask'].to(model.device)
             labels = batch['labels'].to(model.device)
-            rhos = batch['rho'].to(model.device) # [B, 1] float32
+            rhos = batch['rho'].to(model.device)
             
-            # --- RHO PLUMBING ---
-            # Set the context for HyperLoRA layers
-            model.current_rho = rhos 
-            # --------------------
+            # 1. Update Rho Context
+            model.rho_context.current_rho = rhos
             
+            # 2. Forward
             outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs.loss / args.grad_accum
+            lm_loss = outputs.loss
             
+            # 3. Smoothness Regularization
+            loss = lm_loss
+            if args.lambda_smooth > 0:
+                # Mask out negative rhos (failures) from smoothness penalty?
+                # Usually rho=-1.0 is failure.
+                # Valid mask: rho >= -0.1 (approx) or rho != -1.0
+                valid_mask = (rhos.squeeze() > -0.5) 
+                
+                if valid_mask.any():
+                    # Create Perturbed Rho
+                    # Clamp to ensure we stay in [-1, 1] or [0, 1] depending on domain
+                    eps = args.smooth_eps
+                    rhos_p = rhos.clone()
+                    rhos_p[valid_mask] += eps
+                    rhos_p = torch.clamp(rhos_p, args.smooth_clamp_min, args.smooth_clamp_max)
+                    
+                    # Compute Gates
+                    # We need to catch these so we don't build huge graphs if not needed
+                    # but we do need grads for HyperNet.
+                    
+                    # Gates 1: Current Rho
+                    gates_1 = model_compute_all_gates(model, rhos)
+                    # Gates 2: Perturbed Rho
+                    gates_2 = model_compute_all_gates(model, rhos_p)
+                    
+                    # Flatten and concat -> [B, Total_Rank]
+                    g1_flat = torch.cat([g.reshape(g.shape[0], -1) for g in gates_1], dim=1)
+                    g2_flat = torch.cat([g.reshape(g.shape[0], -1) for g in gates_2], dim=1)
+                    
+                    # Filter by valid mask
+                    # MSE
+                    diff = (g1_flat[valid_mask] - g2_flat[valid_mask])
+                    smooth_loss = (diff ** 2).mean()
+                    
+                    loss = loss + args.lambda_smooth * smooth_loss
+            
+            loss = loss / args.grad_accum
             loss.backward()
             
-            if (step + 1) % args.grad_accum == 0:
-                torch.nn.utils.clip_grad_norm_(trainable_params, 1.0)
+            if (global_step + 1) % args.grad_accum == 0:
+                # Clip?
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
                 
-                # Check for NaNs
-                if torch.isnan(loss).any():
-                    logger.error(f"NaN loss detected at step {global_step}! Stopping.")
-                    return 
-
                 global_step += 1
-                progress_bar.update(1)
-                progress_bar.set_postfix(loss=loss.item() * args.grad_accum)
+                pbar.update(1)
+                pbar.set_postfix(loss=loss.item() * args.grad_accum)
                 
+                # Checkpointing
                 if global_step % args.save_every == 0:
                     save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-                    save_hyperlora_adapter(model, save_path, tokenizer, args)
+                    save_hyperlora_adapter(model, save_path)
+                    tokenizer.save_pretrained(save_path)
                     
-                if global_step >= num_training_steps:
+                # Eval
+                if global_step % args.eval_every == 0 and args.eval_generate:
+                    run_restricted_eval(model, tokenizer, eval_loader_gen, num_samples=args.eval_num_samples, device=model.device)
+                    model.train() 
+
+                if global_step >= args.max_steps:
+                    max_steps_reached = True
                     break
         
-        # Eval at end of epoch? Or just rely on steps.
-        # Let's do a quick eval pass if loader exists
-        pass # skipping epoch-based eval for brevity, relying on step-based.
-
+        if max_steps_reached: break
+        
     logger.info("Training Complete.")
-    save_hyperlora_adapter(model, os.path.join(args.output_dir, "final"), tokenizer, args)
-
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    final_output = os.path.join(args.output_dir, "final")
+    save_hyperlora_adapter(model, final_output)
+    tokenizer.save_pretrained(final_output)
 
 if __name__ == "__main__":
     train()
