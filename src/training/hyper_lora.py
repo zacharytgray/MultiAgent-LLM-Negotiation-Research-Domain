@@ -247,9 +247,14 @@ def model_compute_all_gates(model: nn.Module, rho: torch.Tensor) -> List[torch.T
     Returns list of [Batch, Rank] tensors.
     """
     gates = []
-    for module in model.modules():
-        if isinstance(module, HyperLoRALinear):
-            gates.append(module.compute_gate(rho))
+    # Use cached list if available to avoid tree traversal
+    modules_iter = getattr(model, "hyperlora_modules_list", None)
+    
+    if modules_iter is None:
+        modules_iter = (m for m in model.modules() if isinstance(m, HyperLoRALinear))
+        
+    for module in modules_iter:
+        gates.append(module.compute_gate(rho))
     return gates
 
 def inject_hyperlora(

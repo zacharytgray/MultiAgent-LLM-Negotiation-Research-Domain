@@ -51,6 +51,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
+os.environ["TOKENIZERS_PARALLELISM"] = "false" # Prevent deadlocks on Windows/DataLoader
+
 SPECIAL_TOKENS = [
     "<RHO>", "<ROLE>", "<TURN>", "<TURNS_REMAINING>", 
     "<RESERVATION_NORM>", "<LAST_OFFER_NORM>", "<HISTORY>", 
@@ -422,9 +424,20 @@ def train():
         gate_clamp_min=args.gate_clamp_min,
         gate_clamp_max=args.gate_clamp_max
     )
+
+    # Optimization: Cache the list of HyperLoRA modules to avoid re-iterating modules() every step
+    # This speeds up smoothness regularization significantly.
+    model.hyperlora_modules_list = [m for m in model.modules() if isinstance(m, HyperLoRALinear)]
+    logger.info(f"Cached {len(model.hyperlora_modules_list)} HyperLoRA modules for optimization.")
     
     if not args.use_qlora:
-        model.to("cuda" if torch.cuda.is_available() else "cpu")
+        device_str = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Moving model to {device_str}...")
+        model.to(device_str)
+        if device_str == "cpu":
+            logger.warning("WARNING: CUDA not available! Training will be extremely slow.")
+        else:
+            logger.info(f"CUDA Active: {torch.cuda.get_device_name(0)}")
         
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
     scheduler = get_linear_schedule_with_warmup(optimizer, args.warmup_steps, args.max_steps)
@@ -437,7 +450,10 @@ def train():
     
     max_steps_reached = False
     while not max_steps_reached:
-        for batch in train_loader:
+        for step_in_epoch, batch in enumerate(train_loader):
+            if step_in_epoch == 0:
+                logger.debug(f"Started Epoch processing. Batch size: {len(batch['input_ids'])}")
+                
             input_ids = batch['input_ids'].to(model.device)
             attention_mask = batch['attention_mask'].to(model.device)
             labels = batch['labels'].to(model.device)
