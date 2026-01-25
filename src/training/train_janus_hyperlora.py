@@ -5,6 +5,7 @@ import random
 import json
 import logging
 import math
+import time
 import re
 from typing import List, Dict, Any, Tuple, Optional
 
@@ -449,15 +450,24 @@ def train():
     pbar = tqdm(total=args.max_steps, desc="Training")
     
     max_steps_reached = False
+    
+    logger.info(f"Starting training loop. Max steps: {args.max_steps}, Grad Accum: {args.grad_accum}")
+    
     while not max_steps_reached:
         for step_in_epoch, batch in enumerate(train_loader):
-            if step_in_epoch == 0:
-                logger.debug(f"Started Epoch processing. Batch size: {len(batch['input_ids'])}")
-                
+            step_start_time = float(time.time()) if step_in_epoch < 5 else 0
+            
+            # Debug log for first few steps
+            if global_step == 0 and step_in_epoch < args.grad_accum * 2:
+                logger.info(f"Micro-step {step_in_epoch+1} (Accumulating for Global Step {global_step+1})...")
+
             input_ids = batch['input_ids'].to(model.device)
             attention_mask = batch['attention_mask'].to(model.device)
             labels = batch['labels'].to(model.device)
             rhos = batch['rho'].to(model.device)
+            
+            if global_step == 0 and step_in_epoch == 0:
+                logger.info(f"Batch loaded. Input shape: {input_ids.shape}. Device: {input_ids.device}")
             
             # 1. Update Rho Context
             model.rho_context.current_rho = rhos
@@ -466,6 +476,9 @@ def train():
             outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
             lm_loss = outputs.loss
             
+            if global_step == 0 and step_in_epoch == 0:
+                logger.info(f"Forward pass done. Loss: {lm_loss.item()}")
+
             # 3. Smoothness Regularization
             loss = lm_loss
             if args.lambda_smooth > 0:
