@@ -9,6 +9,10 @@ from src.agents.base_agent import BaseAgent
 from src.training.hyper_lora import inject_hyperlora
 from src.core.price_structures import PriceAction
 
+# Global Cache for Janus Model
+# Format: { "model_name+adapter_path": (model, tokenizer) }
+_JANUS_MODEL_CACHE = {}
+
 class JanusAgent(BaseAgent):
     """
     Janus Agent: A HyperLoRA-controlled negotiation agent.
@@ -24,16 +28,30 @@ class JanusAgent(BaseAgent):
     def __init__(self, agent_id: int, role: str, model_path: str = "Qwen/Qwen2-7B-Instruct", 
                  adapter_path: str = "checkpoints/janus_v1/final", 
                  rho: float = 0.5,
-                 device: str = "cuda" if torch.cuda.is_available() else "cpu"):
+                 device: str = "cuda" if torch.cuda.is_available() else "cpu",
+                 p_low: float = 200.0,
+                 p_high: float = 1500.0):
         
         super().__init__(agent_id, f"janus_{rho}", "none")
         self.role = role
         self.rho = rho
         self.device = device
         self.adapter_path = adapter_path
+        self.p_low = p_low
+        self.p_high = p_high
+        self.model_path = model_path
         
         print(f"[{role.upper()}] Initializing JanusAgent (rho={rho}) on {device}...")
         
+        # KEY GENERATION
+        cache_key = f"{model_path}_{adapter_path}"
+        
+        if cache_key in _JANUS_MODEL_CACHE:
+            print(f"[{role.upper()}] Using Cached Model for {cache_key}")
+            self.model, self.tokenizer = _JANUS_MODEL_CACHE[cache_key]
+            self.adapter_config = getattr(self.model, "_janus_adapter_config", {})
+            return # Skip loading
+            
         # 1. Load Tokenizer
         # We try to load from adapter_path first (if saved there), else base model
         try:
@@ -80,7 +98,10 @@ class JanusAgent(BaseAgent):
             rank=self.adapter_config.get("rank", 16),
             alpha=self.adapter_config.get("alpha", 32),
             hyper_hidden=self.adapter_config.get("hyper_hidden", 64),
-            dropout=0.0 # No dropout needed for inference
+            dropout=0.0, # No dropout needed for inference
+            use_fourier=self.adapter_config.get("use_fourier", False),
+            fourier_freqs=self.adapter_config.get("fourier_freqs", 8),
+            include_raw=self.adapter_config.get("include_raw", True)
         )
 
         # 5. Load Weights
@@ -91,12 +112,22 @@ class JanusAgent(BaseAgent):
             # We strictly load compatible keys
             missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
             if len(missing) > 0:
-                # This is normal for frozen base params, but we should check if lora params are missing
-                pass
+                # Check for critical lora params
+                critical_missing = [k for k in missing if "lora_" in k or "hyper_net.net" in k]
+                if critical_missing:
+                     print(f"[{role}] CRITICAL WARNING: Missing LoRA/HyperNet keys! ({len(critical_missing)}): {critical_missing[:5]}")
+            if len(unexpected) > 0:
+                print(f"[{role}] WARNING: Unexpected keys during load ({len(unexpected)}): {unexpected[:5]}...")
         else:
             raise FileNotFoundError(f"Could not find adapter weights at {weights_path}")
 
         self.model.eval()
+        
+        # Save to Cache
+        self.model._janus_adapter_config = self.adapter_config # Attach config to model for restoring
+        _JANUS_MODEL_CACHE[cache_key] = (self.model, self.tokenizer)
+        print(f"[{role.upper()}] Model cached for {cache_key}")
+
         
     def _normalize(self, val: float, low: float, high: float) -> float:
         rng = high - low
@@ -134,10 +165,9 @@ class JanusAgent(BaseAgent):
         # Let's check context. Usually keys: role, min_acceptable_price, max_willingness_to_pay
         
         # Training normalization was done on specific 'price_low'/'price_high' columns.
-        # We should use 0-2000 as default or whatever bounds were used in training data gen.
-        # Looking at Negotiation.py: public_price_range=(200.0, 1500.0) or dummy (0, 2000)
-        p_low = 0.0
-        p_high = 2000.0
+        # Defaults match the SingleIssuePriceDomain training distribution
+        p_low = self.p_low
+        p_high = self.p_high
         
         reservation = ctx.get("max_willingness_to_pay") if role == "buyer" else ctx.get("min_acceptable_price")
         res_norm = self._normalize(reservation, p_low, p_high)

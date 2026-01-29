@@ -9,16 +9,30 @@ class RhoHyperNet(nn.Module):
     Hypernetwork that maps a scalar rho to a gating vector g of size [rank].
     
     Structure:
-      rho [B, 1] -> Linear(1, hidden) -> SiLU -> Linear(hidden, hidden) -> SiLU -> Linear(hidden, rank) -> Sigmoid
+      rho [B, 1] -> (Optional Fourier Encode) -> Linear(in_dim, hidden) -> SiLU -> Linear(hidden, hidden) -> SiLU -> Linear(hidden, rank) -> Sigmoid
     """
-    def __init__(self, rank: int, hidden_dim: int = 64, activation: str = 'sigmoid'):
+    def __init__(self, rank: int, hidden_dim: int = 64, activation: str = 'sigmoid',
+                 use_fourier: bool = False, fourier_freqs: int = 8, include_raw: bool = True):
         super().__init__()
         self.rank = rank
         self.hidden_dim = hidden_dim
+        self.use_fourier = use_fourier
+        self.include_raw = include_raw
+        
+        # Calculate Input Dimension
+        if use_fourier:
+            # sin/cos pairs for each freq + optionally raw rho
+            self.input_dim = (2 * fourier_freqs) + (1 if include_raw else 0)
+            # Register frequencies: 2^0, 2^1, ..., 2^(N-1) * pi
+            # We use PI to wrap the space nicely if rho is in [-1, 1]
+            freqs = (2.0 ** torch.arange(fourier_freqs)) * 3.14159265359
+            self.register_buffer("freqs", freqs, persistent=True)
+        else:
+            self.input_dim = 1
         
         # MLP Layers
         self.net = nn.Sequential(
-            nn.Linear(1, hidden_dim),
+            nn.Linear(self.input_dim, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
@@ -34,6 +48,28 @@ class RhoHyperNet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
             
+    def encode_rho(self, rho: torch.Tensor) -> torch.Tensor:
+        """Helper to apply Fourier encoding if enabled."""
+        if not self.use_fourier:
+            return rho
+            
+        # rho: [Batch, 1]
+        # freqs: [Freqs]
+        # output: [Batch, In_Dim]
+        
+        # Broadcast multiply: [B, 1] * [F] -> [B, F]
+        scaled = rho * self.freqs
+        
+        # Features
+        sin_feat = torch.sin(scaled)
+        cos_feat = torch.cos(scaled)
+        
+        features = [sin_feat, cos_feat]
+        if self.include_raw:
+            features.append(rho)
+            
+        return torch.cat(features, dim=-1)
+
     def forward(self, rho: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -49,8 +85,11 @@ class RhoHyperNet(nn.Module):
         device = self.net[0].weight.device
         if x.device != device:
             x = x.to(device)
+        
+        # Encode if needed
+        x_encoded = self.encode_rho(x)
             
-        output = self.net(x)
+        output = self.net(x_encoded)
         return self.final_act(output)
 
 class HyperLoRALinear(nn.Module):
@@ -66,7 +105,10 @@ class HyperLoRALinear(nn.Module):
         alpha: float, 
         rho_getter: Callable[[], torch.Tensor],
         hyper_hidden: int = 64,
-        dropout_p: float = 0.05
+        dropout_p: float = 0.05,
+        use_fourier: bool = False,
+        fourier_freqs: int = 8,
+        include_raw: bool = True
     ):
         super().__init__()
         self.base_layer = base_layer
@@ -90,7 +132,13 @@ class HyperLoRALinear(nn.Module):
         self.lora_B = nn.Parameter(torch.empty(out_features, rank))
         
         # HyperNetwork (Gating)
-        self.hyper_net = RhoHyperNet(rank, hidden_dim=hyper_hidden)
+        self.hyper_net = RhoHyperNet(
+            rank, 
+            hidden_dim=hyper_hidden,
+            use_fourier=use_fourier,
+            fourier_freqs=fourier_freqs,
+            include_raw=include_raw
+        )
         
         self.dropout = nn.Dropout(p=dropout_p)
         
@@ -203,7 +251,10 @@ def inject_hyperlora(
     rank: int = 16, 
     alpha: float = 32.0, 
     dropout: float = 0.05, 
-    hyper_hidden: int = 64
+    hyper_hidden: int = 64,
+    use_fourier: bool = False,
+    fourier_freqs: int = 8,
+    include_raw: bool = True
 ):
     """
     Injects HyperLoRALinear layers into the model in-place.
@@ -251,7 +302,10 @@ def inject_hyperlora(
             alpha=alpha,
             rho_getter=rho_getter,
             hyper_hidden=hyper_hidden,
-            dropout_p=dropout
+            dropout_p=dropout,
+            use_fourier=use_fourier,
+            fourier_freqs=fourier_freqs,
+            include_raw=include_raw
         )
         
         # Replace

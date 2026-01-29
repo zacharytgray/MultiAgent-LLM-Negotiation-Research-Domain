@@ -74,6 +74,42 @@ class RawNegotiationLogEntry:
     agent2_private_context: str = ""
     outcome_details: str = ""
 
+@dataclass
+class PriceDomainLogEntry:
+    """
+    Log entry specifically for Single Issue Price Domain.
+    """
+    session_id: str
+    timestamp: str
+    model_name: str
+    
+    agent1_type: str
+    agent2_type: str
+    
+    round_number: int
+    round_duration: float
+    turns: int
+    
+    # Context
+    buyer_max: float
+    seller_min: float
+    zopa_low: float
+    zopa_high: float
+    
+    # Outcome
+    agreement: bool
+    final_price: Optional[float]
+    within_zopa: bool
+    
+    # Utilities
+    agent1_utility: float # Buyer
+    agent2_utility: float # Seller
+    
+    # Transcript
+    history_str: str # Simplified "Speaker: Action" string
+    json_details: str # Full outcome details JSON
+
+
 class CSVLogger:
     """
     Handles CSV logging for negotiation sessions with comprehensive data capture.
@@ -244,6 +280,67 @@ class CSVLogger:
                 
             writer.writerow(entry_dict)
     
+    def log_price_round(self, round_obj: Round, outcome_details: Dict[str, Any], duration: float, 
+                       agent1_type: str, agent2_type: str, domain_context: Dict[str, Any]):
+        """
+        Specialized logging for Price Domain rounds.
+        """
+        import json
+        
+        # Determine filename for price domain
+        if not self.filename.endswith("_price_domain.csv"):
+            base = self.filename.replace(".csv", "")
+            self.price_filename = f"{base}_price_domain.csv"
+            self.price_filepath = os.path.join(self.base_dir, self.price_filename)
+        else:
+            self.price_filepath = self.filepath
+
+        # Extract context
+        buyer_max = domain_context.get("agent1_private_context", {}).get("max_willingness_to_pay", 0.0)
+        seller_min = domain_context.get("agent2_private_context", {}).get("min_acceptable_price", 0.0)
+        
+        # History string
+        hist = []
+        for role, text in round_obj.conversation_history:
+            # simple summary
+            hist.append(f"{role}: {text}")
+        history_str = " | ".join(hist)
+
+        entry = PriceDomainLogEntry(
+            session_id=self.session_id,
+            timestamp=datetime.now().isoformat(),
+            model_name=self.model_name,
+            agent1_type=agent1_type,
+            agent2_type=agent2_type,
+            round_number=round_obj.round_number,
+            round_duration=duration,
+            turns=len(round_obj.conversation_history),
+            buyer_max=float(buyer_max),
+            seller_min=float(seller_min),
+            zopa_low=float(seller_min),
+            zopa_high=float(buyer_max),
+            agreement=outcome_details.get("agreement", False),
+            final_price=outcome_details.get("price"),
+            within_zopa=outcome_details.get("within_zopa", False),
+            agent1_utility=outcome_details.get("agent1_utility", 0.0),
+            agent2_utility=outcome_details.get("agent2_utility", 0.0),
+            history_str=history_str,
+            json_details=json.dumps(outcome_details)
+        )
+        
+        # Write
+        entry_dict = asdict(entry)
+        file_exists = os.path.exists(self.price_filepath)
+        
+        with open(self.price_filepath, 'a', newline='', encoding='utf-8') as csvfile:
+            fieldnames = list(entry_dict.keys())
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            if not file_exists or os.path.getsize(self.price_filepath) == 0:
+                writer.writeheader()
+            writer.writerow(entry_dict)
+            
+        print(f"Logged Price Round to: {self.price_filename}")
+
     def get_filepath(self) -> str:
         """Return the full path to the CSV file."""
         return self.filepath

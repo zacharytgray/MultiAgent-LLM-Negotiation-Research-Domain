@@ -36,6 +36,7 @@ class NegotiationSession:
                  agent2_config: Optional[Dict] = None, domain_type: str = "multi_item",
                  dataset_mode: bool = False, dataset_out: str = "datasets/price_domain.jsonl",
                  seed: Optional[int] = None,
+                 csv_logger: Optional[CSVLogger] = None,
                  **domain_kwargs):
         self.num_rounds = num_rounds
         self.items_per_round = items_per_round
@@ -71,9 +72,12 @@ class NegotiationSession:
         self.total_scores = {"agent1": 0.0, "agent2": 0.0}
         
         # Initialize CSV logger
-        session_label = f"{agent1_type}_vs_{agent2_type}"
-        self.csv_logger = CSVLogger(f"{self.model_name}_{session_label}", items_per_round)
-        print(f"{Fore.GREEN}[CSV] CSV logging to: {self.csv_logger.get_filename()}{Fore.RESET}")
+        if csv_logger:
+            self.csv_logger = csv_logger
+        else:
+            session_label = f"{agent1_type}_vs_{agent2_type}"
+            self.csv_logger = CSVLogger(f"{self.model_name}_{session_label}", items_per_round)
+            print(f"{Fore.GREEN}[CSV] CSV logging to: {self.csv_logger.get_filename()}{Fore.RESET}")
         
         # Get agent configurations
         if agent1_config is None:
@@ -1085,22 +1089,30 @@ Present this proposal naturally as if you determined it through your own strateg
                 "outcome_details": self.domain.get_outcome()
             }
             if self.domain_type == "price":
-                 # Format offer history for visual clarity in logs if possible, or just raw list
-                 extra_kwargs["proposal_history"] = getattr(self.domain, "offer_history", [])
-
-            log_entry = self.csv_logger.create_log_entry(
-                round_obj=round_obj,
-                round_duration=round_duration,
-                final_allocation=final_allocation,
-                allocation_tracker=self.allocation_tracker,
-                total_rounds=self.num_rounds,
-                agent1_type=self.agent1_type,
-                agent2_type=self.agent2_type,
-                reached_consensus=reached_consensus,
-                **agent_params,
-                **extra_kwargs
-            )
-            self.csv_logger.log_round(log_entry)
+                 # Use Specialized Price Logger
+                 self.csv_logger.log_price_round(
+                     round_obj=round_obj, 
+                     outcome_details=self.domain.get_outcome(),
+                     duration=round_duration,
+                     agent1_type=self.agent1_type,
+                     agent2_type=self.agent2_type,
+                     domain_context=extra_kwargs
+                 )
+            else:
+                # Default Multi-Item Logger
+                log_entry = self.csv_logger.create_log_entry(
+                    round_obj=round_obj,
+                    round_duration=round_duration,
+                    final_allocation=final_allocation,
+                    allocation_tracker=self.allocation_tracker,
+                    total_rounds=self.num_rounds,
+                    agent1_type=self.agent1_type,
+                    agent2_type=self.agent2_type,
+                    reached_consensus=reached_consensus,
+                    **agent_params,
+                    **extra_kwargs
+                )
+                self.csv_logger.log_round(log_entry)
             
             if reached_consensus:
                 print(f"{Fore.GREEN}[CSV] Round {round_obj.round_number} logged to CSV (Consensus: YES, Duration: {round_duration:.2f}s, Turns: {len(round_obj.conversation_history)}){Fore.RESET}")

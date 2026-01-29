@@ -32,19 +32,22 @@ class SingleIssuePriceDomain(BaseDomain):
         self.last_offerer_id = None
         self.offer_history = []
         
-        # Configurable ranges for random bounds
-        buyer_max_range = kwargs.get("buyer_max_range", (100, 200))
-        seller_min_range = kwargs.get("seller_min_range", (50, 150))
+        # Standard Training Distribution (Paper Replication)
+        # Buyer Max ~ N(900, 50)
+        # Seller Min = Buyer Max - 500 (Fixed ZOPA width of 500)
+        # This ensures agents trained on dataset generation see similar distributions in live testing.
         
-        # Ensure there is a ZOPA (Zone of Possible Agreement) usually, but not strictly required
-        # For simplicity, let's just pick randoms.
-        self.buyer_max = round(random.uniform(*buyer_max_range), 2)
-        self.seller_min = round(random.uniform(*seller_min_range), 2)
-        
-        # Force a small ZOPA if they don't overlap, to ensure interesting negotiation?
-        # Requirement said: "Buyer has max willingness to pay... Seller has minimum acceptable price"
-        # It didn't strictly say there must be a ZOPA, but it's better for testing.
-        # Let's trust the configured ranges.
+        if "buyer_max_range" in kwargs:
+             # Manual override path (legacy or specific tests)
+             buyer_max_range = kwargs.get("buyer_max_range", (100, 200))
+             self.buyer_max = round(random.uniform(*buyer_max_range), 2)
+             # If seller range provided, use it, else generic
+             seller_min_range = kwargs.get("seller_min_range", (50, 150))
+             self.seller_min = round(random.uniform(*seller_min_range), 2)
+        else:
+             # Default to matching the training dataset distribution
+             self.buyer_max = round(random.gauss(900, 50), 2)
+             self.seller_min = round(self.buyer_max - 500.0, 2)
         
         return {
             "buyer_max": self.buyer_max,
@@ -159,14 +162,19 @@ class SingleIssuePriceDomain(BaseDomain):
                 "agreement": False,
                 "agent1_utility": 0.0,
                 "agent2_utility": 0.0,
-                "price": None
+                "price": None,
+                "within_zopa": False
             }
+            
+        # ZOPA Check: Seller Min <= Price <= Buyer Max
+        within_zopa = (self.seller_min <= self.agreement_price <= self.buyer_max)
             
         return {
             "agreement": True,
             "agent1_utility": self.buyer_max - self.agreement_price, # Buyer
             "agent2_utility": self.agreement_price - self.seller_min, # Seller
-            "price": self.agreement_price
+            "price": self.agreement_price,
+            "within_zopa": within_zopa
         }
 
     def format_agent_prompt_context(self, agent_id: int) -> str:

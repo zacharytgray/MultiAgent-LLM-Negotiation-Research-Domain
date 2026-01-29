@@ -117,13 +117,6 @@ python visualize_concessions.py
 ```
 *Output: `concession_plots/`*
 
-**Interaction Plots:**
-Simulates specific matchups (e.g., Tit-for-Tat vs Boulware) to see how they react to each other.
-```bash
-python visualize_interactions.py
-```
-*Output: `interaction_plots/`*
-
 ---
 
 ## 🤖 Agent Architectures

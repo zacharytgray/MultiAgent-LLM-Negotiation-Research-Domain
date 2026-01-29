@@ -14,8 +14,8 @@ async def run_test():
     # Configure Janus as Agent 1 (Buyer) with rho=0.0 (Aggressive)
     # Explicitly set HF model path so it doesn't try to load the Ollama tag from HF
     agent1_config = {
-        "rho": 0.0,
-        "adapter_path": "checkpoints/janus_v1/final",
+        "rho": 0.0, # 0.0 is buyer, 1.0 is seller
+        "adapter_path": "checkpoints/final",
         "model_path": "Qwen/Qwen2-7B-Instruct" 
     }
     
